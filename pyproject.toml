@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "second-brain"
+version = "0.1.0"
+description = "Personal AI Assistant — Second Brain (Telegram)"
+requires-python = ">=3.11"
+
+# --- Phase 0 (Foundation) dependencies — active now ---
+dependencies = [
+    "python-telegram-bot[job-queue]>=21.4,<22",  # async Telegram bot + JobQueue (APScheduler)
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",                     # .env -> typed settings
+    "SQLAlchemy[asyncio]>=2.0.30",
+    "asyncpg>=0.29",                              # async Postgres driver
+    "alembic>=1.13",                              # DB migrations (used from Phase 1)
+    "structlog>=24.1",                            # structured logging
+]
+
+# --- Future phases (add when we reach them) ---
+# Phase 1-2 (LLM brain + RAG):
+#   "anthropic>=0.39"          # Claude API
+#   "openai>=1.40"             # Whisper STT + text-embedding-3-small
+#   "pgvector>=0.3"            # SQLAlchemy Vector type
+# Phase 3 (capture+):
+#   "azure-cognitiveservices-speech>=1.40"  # az-AZ STT fallback + TTS
+#   "pypdf>=4.2"
+#   "python-docx>=1.1"
+# Phase 4 (proactive+tools):
+#   "tavily-python>=0.5"       # web search
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

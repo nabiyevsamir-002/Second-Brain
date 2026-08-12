@@ -1,0 +1,37 @@
+# Secrets — HEÇ VAXT commit etmə
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Tooling / cache
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Data / logs / media
+*.log
+data/
+downloads/
+*.ogg
+*.oga
+*.mp3
+*.wav
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Postgres local volume (əgər bind-mount istifadə etsək)
+pgdata/
