@@ -27,14 +27,22 @@ app/
   main.py            # giriş nöqtəsi
   config.py          # .env -> settings
   logging_conf.py    # struktur log
-  db.py              # async DB + pgvector yoxlaması
+  db.py              # async engine/session + pgvector yoxlaması
+  models.py          # SQLAlchemy modelləri (users, notes, ...) + Vector(1536)
   bot/               # telegram app + handlers (echo)
   providers/         # LLM/STT/TTS/Embedding abstraksiyası
+  repositories/      # DB CRUD (users, notes + vektor axtarış)
   tools/             # agent tool abstraksiyası
+migrations/          # Alembic (async) — 0001_initial full schema
+scripts/backup.sh    # gecə pg_dump backup (retention 14 gün)
 docker/
   init-pgvector.sql  # CREATE EXTENSION vector
+  entrypoint.sh      # start-da alembic upgrade head, sonra botu işə salır
 docker-compose.yml   # Postgres 16 + pgvector + bot
 ```
+
+`make up` edəndə migration-lar **avtomatik** tətbiq olunur (entrypoint).
+Backup: `./scripts/backup.sh` (cron/scheduler ilə gecə çağırılacaq).
 
 ## Detallı quraşdırma (API açarları, addım-addım)
 👉 **[SETUP.md](SETUP.md)** — Azərbaycanca tam bələdçi.

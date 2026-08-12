@@ -19,10 +19,11 @@ env/
 .pytest_cache/
 .mypy_cache/
 
-# Data / logs / media
+# Data / logs / media / backups
 *.log
 data/
 downloads/
+backups/
 *.ogg
 *.oga
 *.mp3

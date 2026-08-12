@@ -25,7 +25,11 @@ services:
     build: .
     container_name: second_brain_bot
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      # .env hələ yoxdursa compose səhv verməsin — bot app-səviyyəsində
+      # aydın xəta verəcək (TELEGRAM_BOT_TOKEN yoxdur). DB default-la işləyir.
+      - path: .env
+        required: false
     depends_on:
       db:
         condition: service_healthy

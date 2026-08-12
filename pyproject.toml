@@ -15,15 +15,15 @@ dependencies = [
     "pydantic-settings>=2.3",                     # .env -> typed settings
     "SQLAlchemy[asyncio]>=2.0.30",
     "asyncpg>=0.29",                              # async Postgres driver
-    "alembic>=1.13",                              # DB migrations (used from Phase 1)
+    "alembic>=1.13",                              # DB migrations
+    "pgvector>=0.3",                             # SQLAlchemy Vector(1536) tipi (RAG)
     "structlog>=24.1",                            # structured logging
 ]
 
 # --- Future phases (add when we reach them) ---
-# Phase 1-2 (LLM brain + RAG):
+# Phase 1-2 (LLM brain + RAG) — açarlar gələndə aktivləşdiriləcək:
 #   "anthropic>=0.39"          # Claude API
 #   "openai>=1.40"             # Whisper STT + text-embedding-3-small
-#   "pgvector>=0.3"            # SQLAlchemy Vector type
 # Phase 3 (capture+):
 #   "azure-cognitiveservices-speech>=1.40"  # az-AZ STT fallback + TTS
 #   "pypdf>=4.2"
