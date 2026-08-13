@@ -19,6 +19,7 @@ MODEL_PRICES: dict[str, tuple[float, float]] = {
 EMBED_PRICE_PER_M = 0.02  # text-embedding-3-small (yalnız input)
 STT_PRICE_PER_MIN = 0.006  # whisper-1
 TTS_PRICE_PER_M = 16.0  # Azure Neural TTS (az-AZ) — 1M simvol üçün USD (təxmini)
+SEARCH_PRICE_PER_CALL = 0.008  # Tavily basic search — hər çağırış üçün USD (təxmini)
 
 _M = Decimal(1_000_000)
 
@@ -44,3 +45,8 @@ def stt_cost(seconds: float) -> Decimal:
 def tts_cost(chars: int) -> Decimal:
     """Azure Neural TTS xərci (sintez olunan simvol sayına görə)."""
     return Decimal(chars) * Decimal(str(TTS_PRICE_PER_M)) / _M
+
+
+def search_cost(calls: int = 1) -> Decimal:
+    """Tavily web axtarış xərci (çağırış sayına görə, təxmini)."""
+    return Decimal(calls) * Decimal(str(SEARCH_PRICE_PER_CALL))

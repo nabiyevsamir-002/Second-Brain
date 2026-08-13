@@ -26,11 +26,8 @@ dependencies = [
     "pypdf>=4.2",                                 # PDF mətn çıxarma
     "python-docx>=1.1",                           # DOCX mətn çıxarma
     "azure-cognitiveservices-speech>=1.40",       # az-AZ TTS (səsli cavab, Phase 3)
+    "tavily-python>=0.5",                          # web axtarış (agent web_search tool)
 ]
-
-# --- Future phases (add when we reach them) ---
-# Phase 4 (proactive+tools):
-#   "tavily-python>=0.5"       # web search
 
 [tool.setuptools.packages.find]
 include = ["app*"]

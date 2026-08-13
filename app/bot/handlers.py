@@ -68,7 +68,8 @@ HELP = (
     "• ⏰ «sabah 9-da həkimə zəng etməyi xatırlat» → xatırlatma qururam\n"
     "• 📋 «hesabatı bitirmək tapşırığı əlavə et» → tapşırıq yaradıram\n"
     "• 🔗 link → səhifə xülasələnib saxlanılır\n"
-    "• 📄 PDF / DOCX → mətn indeksləib axtarışa əlavə olunur"
+    "• 📄 PDF / DOCX → mətn indeksləib axtarışa əlavə olunur\n"
+    "• 🌐 «internetdə axtar...», cari xəbər/hava/qiymət → web axtarış (mənbə URL-li)"
 )
 
 

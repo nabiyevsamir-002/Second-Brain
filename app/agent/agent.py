@@ -34,6 +34,7 @@ AGENT_SYSTEM_TMPL = (
     "• SUAL / axtarış — mövcud qeydlər barədə ('nə vaxt', 'harada', '... haqqında nə "
     "yazmışdım', 'tap', 'hansı') → `search_notes`, sonra tapılan qeydlərə ƏSASLANARAQ "
     "cavab ver və istifadə etdiyin qeydləri [#id] ilə SİTAT gətir. Uydurma etmə.\n\n"
+    "{web_search_intent}"
     "Qaydalar:\n"
     "- Vaxt qeyd olunubsa və istifadəçi xəbərdar edilmək istəyirsə → create_reminder; "
     "sadəcə görüləcək işdirsə → create_task; qalan hallarda şübhə varsa → save_note.\n"
@@ -42,9 +43,20 @@ AGENT_SYSTEM_TMPL = (
 )
 
 
-def build_system() -> str:
+WEB_SEARCH_INTENT = (
+    "• İNTERNET AXTARIŞ — cari/aktual məlumat, xəbər, hava, qiymət, ümumi faktlar "
+    "(istifadəçinin qeydlərində OLMAYAN, internetdən) → `web_search`; sonra "
+    "nəticələrə ƏSASLANARAQ Azərbaycanca cavab ver və mənbə URL-lərini göstər. "
+    "Uydurma etmə. (Şəxsi qeydlər üçün search_notes, internet üçün web_search.)\n\n"
+)
+
+
+def build_system(has_web_search: bool = False) -> str:
     """System prompt-u cari local vaxtla qur (nisbi vaxt hesablaması üçün)."""
-    return AGENT_SYSTEM_TMPL.format(now=now_local_prompt())
+    return AGENT_SYSTEM_TMPL.format(
+        now=now_local_prompt(),
+        web_search_intent=WEB_SEARCH_INTENT if has_web_search else "",
+    )
 
 
 class BrainAgent:
@@ -55,6 +67,16 @@ class BrainAgent:
         self.tools.register(SearchNotesTool())
         self.tools.register(CreateReminderTool())
         self.tools.register(CreateTaskTool())
+
+        # web_search yalnız Tavily provider varsa qeydiyyatdan keçir (yoxdursa
+        # Claude-a təklif olunmur).
+        from app.providers.registry import providers
+
+        self.has_web_search = providers.has("search")
+        if self.has_web_search:
+            from app.tools.web_search import WebSearchTool
+
+            self.tools.register(WebSearchTool())
 
     async def handle(
         self,
@@ -80,7 +102,7 @@ class BrainAgent:
 
         messages: list[dict[str, Any]] = hist + [{"role": "user", "content": user_text}]
 
-        system = build_system()
+        system = build_system(has_web_search=self.has_web_search)
         for _ in range(MAX_TOOL_ROUNDS):
             resp = await self.llm.complete(
                 system=system,

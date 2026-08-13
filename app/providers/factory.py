@@ -43,6 +43,12 @@ def init_providers() -> None:
             ),
         )
 
+    # Tavily web axtarış — açar varsa (agent web_search tool bundan asılıdır).
+    if settings.tavily_api_key:
+        from app.providers.search_tavily import TavilySearchProvider
+
+        providers.register("search", TavilySearchProvider(settings.tavily_api_key))
+
     # Tək tool-using agent — llm + embedder hər ikisi varsa qurulur.
     if providers.has("llm") and providers.has("embed"):
         from app.agent.agent import BrainAgent
@@ -55,5 +61,6 @@ def init_providers() -> None:
         embed=providers.has("embed"),
         stt=providers.has("stt"),
         tts=providers.has("tts"),
+        search=providers.has("search"),
         agent=providers.has("agent"),
     )
