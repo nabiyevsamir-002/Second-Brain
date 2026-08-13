@@ -14,13 +14,16 @@ from telegram.ext import ContextTypes
 
 from app.db import SessionLocal
 from app.logging_conf import get_logger
-from app.models import NoteSource
+from app.models import NoteSource, TaskStatus
 from app.providers.registry import providers
 from app.repositories.messages import add_message, get_recent_messages
 from app.repositories.notes import list_notes, search_notes_by_vector
+from app.repositories.reminders import list_pending
+from app.repositories.tasks import complete_task, list_open_tasks
 from app.repositories.users import get_or_create_user
 from app.services.ingest_service import ingest_document, ingest_url
 from app.services.notes_service import capture_note
+from app.timeutils import fmt_local, now_utc
 
 log = get_logger("bot")
 
@@ -38,9 +41,14 @@ HELP = (
     "/help — bu kömək\n"
     "/list — son qeydlər\n"
     "/search <söz> — qeydlərdə axtarış\n"
+    "/tasks — açıq tapşırıqlar\n"
+    "/done <id> — tapşırığı bağla\n"
+    "/remind — gələn xatırlatmalar\n"
     "/id — Telegram ID\n\n"
     "*Nə göndərə bilərsən:*\n"
-    "• 📝 mətn / 🎙 səs → qeyd və ya sual\n"
+    "• 📝 mətn / 🎙 səs → qeyd, sual, tapşırıq və ya xatırlatma\n"
+    "• ⏰ «sabah 9-da həkimə zəng etməyi xatırlat» → xatırlatma qururam\n"
+    "• 📋 «hesabatı bitirmək tapşırığı əlavə et» → tapşırıq yaradıram\n"
     "• 🔗 link → səhifə xülasələnib saxlanılır\n"
     "• 📄 PDF / DOCX → mətn indeksləib axtarışa əlavə olunur"
 )
@@ -257,6 +265,62 @@ async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         body = body[:70] + ("…" if len(body) > 70 else "")
         pct = round(max(0.0, 1.0 - dist) * 100)
         lines.append(f"#{note.id} {icon} {body} · {pct}%")
+    await update.message.reply_markdown("\n".join(lines))
+
+
+async def tasks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with SessionLocal() as session:
+        tasks = await list_open_tasks(session, update.effective_user.id, limit=30)
+
+    if not tasks:
+        await update.message.reply_text(
+            "✅ Açıq tapşırıq yoxdur. Yeni əlavə etmək üçün sadəcə yaz "
+            "(məs: «hesabatı bitirmək tapşırığı əlavə et»)."
+        )
+        return
+
+    now = now_utc()
+    lines = ["📋 *Açıq tapşırıqlar:*\n"]
+    for t in tasks:
+        suffix = ""
+        if t.due_at is not None:
+            overdue = t.due_at <= now
+            when = fmt_local(t.due_at, with_weekday=False)
+            suffix = f" · ⚠️ gecikib ({when})" if overdue else f" · ⏳ {when}"
+        lines.append(f"#{t.id} — {t.title}{suffix}")
+    lines.append("\n_Bağlamaq üçün:_ /done <id>")
+    await update.message.reply_markdown("\n".join(lines))
+
+
+async def done_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    arg = (context.args[0] if context.args else "").strip()
+    if not arg.isdigit():
+        await update.message.reply_text("İstifadə: /done <tapşırıq id> (məs: /done 3)")
+        return
+    task_id = int(arg)
+    async with SessionLocal() as session:
+        task = await complete_task(session, update.effective_user.id, task_id)
+        await session.commit()
+    if task is None:
+        await update.message.reply_text(f"🤷 #{task_id} nömrəli açıq tapşırıq tapılmadı.")
+        return
+    await update.message.reply_text(f"✅ Tapşırıq #{task.id} bağlandı: «{task.title}»")
+
+
+async def remind_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with SessionLocal() as session:
+        pending = await list_pending(session, update.effective_user.id, limit=20)
+
+    if not pending:
+        await update.message.reply_text(
+            "⏰ Gələn xatırlatma yoxdur. Qurmaq üçün sadəcə yaz "
+            "(məs: «2 saatdan sonra su içməyi xatırlat»)."
+        )
+        return
+
+    lines = ["⏰ *Gələn xatırlatmalar:*\n"]
+    for r in pending:
+        lines.append(f"#{r.id} · {fmt_local(r.remind_at)} — {r.text}")
     await update.message.reply_markdown("\n".join(lines))
 
 

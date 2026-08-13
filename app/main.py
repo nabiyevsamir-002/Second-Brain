@@ -5,6 +5,7 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import Application
 
+from app.bot.scheduler import setup_jobs
 from app.bot.telegram_app import build_application
 from app.config import settings
 from app.db import check_database
@@ -29,6 +30,9 @@ async def _post_init(application: Application) -> None:
             )
     except Exception as exc:  # noqa: BLE001
         log.error("database_check_failed", error=str(exc))
+
+    # Proaktiv scheduler (reminders çatdırılması + səhər brifinqi).
+    setup_jobs(application)
 
 
 def main() -> None:

@@ -7,7 +7,10 @@ from typing import Any
 from app.logging_conf import get_logger
 from app.models import NoteSource
 from app.providers.llm_claude import ClaudeLLMProvider
+from app.timeutils import now_local_prompt
 from app.tools.base import ToolContext
+from app.tools.create_reminder import CreateReminderTool
+from app.tools.create_task import CreateTaskTool
 from app.tools.registry import ToolRegistry
 from app.tools.save_note import SaveNoteTool
 from app.tools.search_notes import SearchNotesTool
@@ -16,21 +19,31 @@ log = get_logger("agent")
 
 MAX_TOOL_ROUNDS = 5
 
-AGENT_SYSTEM = (
+AGENT_SYSTEM_TMPL = (
     "Sən Samir-in şəxsi 'Second Brain' assistentisən. HƏMIŞƏ Azərbaycanca cavab ver.\n"
+    "CARİ VAXT (Asia/Baku): {now}. Nisbi vaxtları ('sabah', '2 saatdan sonra', "
+    "'cümə axşamı 9-da') HƏMİŞƏ bu vaxta əsasən hesabla.\n\n"
     "Gələn mesajın niyyətini anla və uyğun aləti çağır:\n\n"
-    "• Mesaj bir QEYD, fikir, tapşırıq, məlumat və ya xatırlatmadırsa (istifadəçi "
-    "nəyisə yadda saxlamaq istəyir) → `save_note` aləti (content = mesajın mətni). "
+    "• XATIRLATMA — istifadəçi müəyyən vaxtda xəbərdar edilmək istəyir ('...-ı "
+    "xatırlat', 'yadıma sal') → `create_reminder` (text + remind_at, local ISO).\n\n"
+    "• TAPŞIRIQ — görüləcək iş / todo əlavə etmək ('tapşırıq əlavə et', 'et', "
+    "'bitir', deadline) → `create_task` (title + istəyə bağlı due_at).\n\n"
+    "• QEYD — fikir, məlumat, sadəcə yadda saxlamaq → `save_note` (content = mesaj). "
     "Saxladıqdan sonra qısa təsdiq ver: kateqoriya, tag-lar və varsa əlaqəli qeydlər.\n\n"
-    "• Mesaj SUAL və ya mövcud qeydlər barədə axtarışdırsa ('nə vaxt', 'harada', "
-    "'... haqqında nə yazmışdım', 'tap', 'xatırlat', 'hansı') → `search_notes` aləti, "
-    "sonra tapılan qeydlərə ƏSASLANARAQ cavab ver və istifadə etdiyin qeydləri [#id] "
-    "ilə SİTAT gətir. Uydurma etmə — yalnız tapılan qeydlərdən danış.\n\n"
+    "• SUAL / axtarış — mövcud qeydlər barədə ('nə vaxt', 'harada', '... haqqında nə "
+    "yazmışdım', 'tap', 'hansı') → `search_notes`, sonra tapılan qeydlərə ƏSASLANARAQ "
+    "cavab ver və istifadə etdiyin qeydləri [#id] ilə SİTAT gətir. Uydurma etmə.\n\n"
     "Qaydalar:\n"
-    "- Şübhə varsa, mesajı qeyd kimi saxla (default = save_note).\n"
+    "- Vaxt qeyd olunubsa və istifadəçi xəbərdar edilmək istəyirsə → create_reminder; "
+    "sadəcə görüləcək işdirsə → create_task; qalan hallarda şübhə varsa → save_note.\n"
     "- search_notes boş nəticə verirsə: 'Bu barədə qeyd tapmadım' de.\n"
     "- Cavabların qısa, aydın və Azərbaycanca olsun."
 )
+
+
+def build_system() -> str:
+    """System prompt-u cari local vaxtla qur (nisbi vaxt hesablaması üçün)."""
+    return AGENT_SYSTEM_TMPL.format(now=now_local_prompt())
 
 
 class BrainAgent:
@@ -39,6 +52,8 @@ class BrainAgent:
         self.tools = ToolRegistry()
         self.tools.register(SaveNoteTool())
         self.tools.register(SearchNotesTool())
+        self.tools.register(CreateReminderTool())
+        self.tools.register(CreateTaskTool())
 
     async def handle(
         self,
@@ -64,9 +79,10 @@ class BrainAgent:
 
         messages: list[dict[str, Any]] = hist + [{"role": "user", "content": user_text}]
 
+        system = build_system()
         for _ in range(MAX_TOOL_ROUNDS):
             resp = await self.llm.complete(
-                system=AGENT_SYSTEM,
+                system=system,
                 messages=messages,
                 tools=self.tools.schemas(),
                 model=self.llm.model_main,

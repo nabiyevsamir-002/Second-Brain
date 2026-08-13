@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from zoneinfo import ZoneInfo
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +18,10 @@ class Settings(BaseSettings):
     # --- Mühit / log ---
     environment: str = "development"
     log_level: str = "INFO"
+
+    # --- Saat qurşağı (Phase 4 — reminders/tasks/brifinq) ---
+    # Azərbaycan DST işlətmir (sabit UTC+4), amma ZoneInfo gələcək üçün təhlükəsizdir.
+    timezone: str = "Asia/Baku"
 
     # --- Telegram (Phase 0) ---
     telegram_bot_token: str = ""
@@ -40,6 +46,11 @@ class Settings(BaseSettings):
 
     # --- Tavily web axtarış (Phase 4) ---
     tavily_api_key: str = ""
+
+    @property
+    def tz(self) -> ZoneInfo:
+        """Konfiqurasiya olunmuş saat qurşağı (reminders/tasks/brifinq üçün)."""
+        return ZoneInfo(self.timezone)
 
     @property
     def allowed_ids(self) -> list[int]:

@@ -3,8 +3,8 @@
 Şəxsi "ikinci beyin": Telegram üzərindən səsli və mətn qeydlər al, sonra
 təbii dildə bu qeydlərlə söhbət et (RAG semantik axtarış).
 
-> **Status:** Phase 0 — Foundation (git repo, Docker + Postgres/pgvector,
-> config, provider/tool skeleti, işlək **echo bot**).
+> **Status:** Phase 4 — Proactive (qeyd/söhbət + RAG axtarış + link/PDF/DOCX
+> ingest + **xatırlatmalar, tapşırıqlar, səhər brifinqi**). Canlı işləyir.
 
 ## Tex Stack
 - Python 3.11+ · python-telegram-bot v21 (async)
@@ -42,7 +42,23 @@ docker-compose.yml   # Postgres 16 + pgvector + bot
 ```
 
 `make up` edəndə migration-lar **avtomatik** tətbiq olunur (entrypoint).
-Backup: `./scripts/backup.sh` (cron/scheduler ilə gecə çağırılacaq).
+
+## Proaktiv scheduler (Phase 4)
+Bot işləyəndə PTB JobQueue avtomatik qoşulur:
+- **Xatırlatmalar** — hər 60 san vaxtı çatanlar Telegram-a çatdırılır.
+- **Səhər brifinqi** — hər gün 08:00 (`TIMEZONE`, default Asia/Baku): günün
+  açıq tapşırıqları + xatırlatmalar + son qeydlər.
+
+Xatırlatma/tapşırıq təbii dillə yaranır (məs: *«sabah 9-da həkimə zəng etməyi
+xatırlat»*). Əmrlər: `/tasks`, `/done <id>`, `/remind`.
+
+## Gecə backup (host cron)
+`scripts/backup.sh` `docker exec ... pg_dump` işlədir — **host cron**-a bağla
+(bot çöksə də backup davam etsin). VPS-də `crontab -e`:
+```cron
+# hər gecə 03:15 — Second Brain DB backup
+15 3 * * * cd /root/AI-Assistant && ./scripts/backup.sh >> ./backups/backup.log 2>&1
+```
 
 ## Detallı quraşdırma (API açarları, addım-addım)
 👉 **[SETUP.md](SETUP.md)** — Azərbaycanca tam bələdçi.

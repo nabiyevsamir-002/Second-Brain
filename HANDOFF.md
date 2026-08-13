@@ -12,12 +12,18 @@ və **növbəti addımı** saxlayır.
 | **Phase 1 (capture)** | Providers (Claude/Whisper/OpenAI-embed), capture workflow (təmizlə→embed→saxla), `/list` | `cdcbd5b` |
 | **Phase 2 (RAG)** | Tək tool-using Claude agent (intent routing), `save_note`+`search_notes` tools, RAG chat + `[#id]` citations, `/search`, chat yaddaşı (messages), əlaqəli qeyd kəşfi (note_links) | `d88f0b2` |
 | **Phase 3 (capture+)** | Link→fetch+xülasə+saxla, forward→save, PDF/DOCX indeks (chunk→batch embed) | `7202fd3` |
+| **Phase 4 (proactive)** | `create_reminder`+`create_task` agent tool-ları, PTB JobQueue scheduler (reminder çatdırılması hər 60s + səhər brifinqi 08:00), `/tasks` `/done` `/remind`, Asia/Baku tz | *(bu commit)* |
 
 **Canlı vəziyyət:** bot `docker compose` ilə işləyir; loglar:
 `providers_initialized agent=True embed=True llm=True stt=True`,
-`database_ready pgvector=True`, `Application started`.
+`database_ready pgvector=True`,
+`scheduler_ready briefing_at='08:00 Asia/Baku' reminder_interval_sec=60`,
+`Application started`.
 Samir Telegram-da mətn+səs+link+sənəd göndərib test edib — hər şey işləyir,
 Whisper AZ dəqiqliyi **yaxşıdır** (Azure STT fallback lazım deyil).
+Phase 4 smoke test (`scripts/phase4_smoke.py`) keçib: agent nisbi vaxtı düz
+hesablayır (2 saat→+119dəq), task deadline parse olunur, çatdırılma seçimi düz,
+brifinq mətni qurulur; canlı reminder Telegram-a real çatdırılıb.
 
 ## 🔑 Açarlar (`.env`, git izləmir)
 - ✅ `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_IDS=6389536587`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
@@ -30,14 +36,17 @@ app/
   main.py                # entrypoint (init_providers -> build_application -> run_polling)
   config.py, db.py, models.py, logging_conf.py
   bot/telegram_app.py    # handler qeydiyyatı + allowlist
-  bot/handlers.py        # /start /help /id /list /search, mətn/səs/link/sənəd routing
-  agent/agent.py         # BrainAgent — Claude tool-use döngəsi (intent routing)
+  bot/handlers.py        # /start /help /id /list /search /tasks /done /remind, routing
+  bot/scheduler.py       # PTB JobQueue — reminder çatdırılması + səhər brifinqi
+  agent/agent.py         # BrainAgent — Claude tool-use döngəsi (intent routing) + cari vaxt inject
+  timeutils.py           # Baku local ⇄ tz-aware parse/format (parse_local_iso, fmt_local)
   providers/             # llm_claude, embeddings_openai, stt_whisper, factory, registry, base
-  tools/                 # base(+ToolContext), save_note, search_notes, registry
+  tools/                 # base(+ToolContext), save_note, search_notes, create_reminder, create_task, registry
   services/              # notes_service (capture_note), ingest_service (url/pdf/docx)
-  repositories/          # users, notes, messages, links, usage
-migrations/              # Alembic (0001_initial)
-scripts/backup.sh        # pg_dump (hələ scheduler-ə bağlı deyil)
+  repositories/          # users, notes, messages, links, usage, reminders, tasks
+migrations/              # Alembic (0001_initial — tasks/reminders cədvəlləri onsuz da var)
+scripts/backup.sh        # pg_dump → HOST CRON-a bağlanır (aşağı bax)
+scripts/phase4_smoke.py  # Phase 4 canlı smoke test (docker compose run ilə)
 docker/entrypoint.sh     # start-da alembic upgrade head, sonra botu işə salır
 ```
 
@@ -63,17 +72,21 @@ docker compose run --rm -e RUN_MIGRATIONS=0 bot python -c "..."
 - `.env.example`-a REAL açar yazma (git izləyir); real açarlar yalnız `.env`-də.
 - Model ID-ləri: `claude-sonnet-5`, `claude-haiku-4-5` (Samir seçib — dəyişmə).
 
-## ⏭️ NÖVBƏTİ ADDIM — Phase 4 (Proactive), başlanmayıb
-Plan (mövcud açarlarla qurula/test edilə bilər; Tavily istisna):
-1. **Yeni agent tool-ları:** `create_task`, `create_reminder` (agentə əlavə et → registry).
-2. **Scheduler:** APScheduler (və ya PTB JobQueue) — reminders `remind_at`-də çatdırılır (sent=True).
-3. **`/tasks`** əmri (açıq tapşırıqlar), tapşırıq statusu.
-4. **Səhər brifinqi:** hər səhər (məs 08:00) → günün tasks + reminders + son qeydlər.
-5. **Gecə backup:** `scripts/backup.sh`-ı scheduler-ə bağla.
-6. **Web search (Tavily):** `web_search` tool + provider — `TAVILY_API_KEY` gələndə.
+## ✅ Phase 4 tamamlandı (reminders + tasks + brifinq). Qalıqlar:
+- **Gecə backup → HOST CRON** (bot daxilində deyil, tövsiyə olunan seçim). VPS-də:
+  ```cron
+  15 3 * * * cd /root/AI-Assistant && ./scripts/backup.sh >> ./backups/backup.log 2>&1
+  ```
+  (Samir hələ VPS-də bu sətri əlavə etməlidir — manual addım.)
+- **Web search (Tavily):** `web_search` tool + provider — `TAVILY_API_KEY` gələndə (deferred).
 
-**Deferred (açar lazımdır):** Phase 3 səsli cavab (Azure `az-AZ` TTS, `AZURE_SPEECH_KEY`);
-Phase 4 web search (Tavily, `TAVILY_API_KEY`).
+## ⏭️ NÖVBƏTİ ADDIM — Phase 5 (Polish)
+Rate-limit, cost dashboard (`usage_log` üzərində), backup verify, `/settings`,
+`/export`, `/delete`. Həmçinin deferred: Phase 3 səsli cavab (Azure `az-AZ` TTS,
+`AZURE_SPEECH_KEY`); Phase 4 Tavily web search (`TAVILY_API_KEY`).
+
+**Deferred (açar lazımdır):** Azure `az-AZ` TTS (`AZURE_SPEECH_KEY`);
+Tavily web search (`TAVILY_API_KEY`).
 
 ## İş üsulu
 Hər fazada: qısa plan → kod (kiçik test edilə bilən addımlar) → açarlarla canlı test

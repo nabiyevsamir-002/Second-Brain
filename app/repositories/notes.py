@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Note, NoteSource
@@ -47,6 +49,16 @@ async def list_notes(session: AsyncSession, user_id: int, limit: int = 20) -> li
 
 async def get_note(session: AsyncSession, note_id: int) -> Note | None:
     return await session.get(Note, note_id)
+
+
+async def count_notes_since(session: AsyncSession, user_id: int, since: datetime) -> int:
+    """`since`-dən bəri yaradılmış qeydlərin sayı (səhər brifinqi üçün)."""
+    result = await session.execute(
+        select(func.count())
+        .select_from(Note)
+        .where(Note.user_id == user_id, Note.created_at >= since)
+    )
+    return int(result.scalar() or 0)
 
 
 async def search_notes_by_vector(

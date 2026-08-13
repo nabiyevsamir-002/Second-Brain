@@ -35,7 +35,7 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
 - Embedding: OpenAI `text-embedding-3-small` (1536 ölçü) — **LOCKED, dəyişmə**
 - Web search: Tavily (hələ yox)
 - PDF/DOCX: pypdf + python-docx
-- Scheduler: APScheduler (reminders + səhər brifinqi) — hələ yox
+- Scheduler: PTB JobQueue (reminders çatdırılması + səhər brifinqi) — ✅ Phase 4
 - DB: SQLAlchemy (async) + Alembic; struktur log (structlog); config: pydantic-settings
 
 ## Data model (Alembic 0001_initial ilə yaradılıb)
@@ -49,8 +49,8 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 `usage_log(id, user_id FK, kind, tokens, cost, created_at)`
 
 ## Əmrlər
-`/start` `/help` `/list` `/search` `/id` (hazır) · `/tasks` `/remind` `/voice`
-`/settings` `/export` `/delete` (gələcək)
+`/start` `/help` `/list` `/search` `/id` `/tasks` `/done` `/remind` (hazır) ·
+`/voice` `/settings` `/export` `/delete` (gələcək)
 
 ## Təhlükəsizlik
 - Allowlist — yalnız Samir-in telegram_id (`ALLOWED_USER_IDS`).
@@ -64,8 +64,8 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 - **Phase 1 — MVP** ✅ (səs/mətn → təmizlə → saxla; `/list`; Whisper AZ)
 - **Phase 2 — RAG Brain** ✅ (embedding, `/search`, chat + citations, auto-kateqoriya, əlaqəli qeyd)
 - **Phase 3 — Capture+** ✅ qismən (forward→save, PDF/DOCX indeks; **Azure TTS səsli cavab qalıb**)
-- **Phase 4 — Proactive** ⏳ NÖVBƏTİ (reminders+tasks, `/tasks`, səhər brifinqi, backup scheduler, Tavily web search)
-- **Phase 5 — Polish** (rate-limit, cost dashboard, backup verify, `/settings`, `/export`, `/delete`)
+- **Phase 4 — Proactive** ✅ (reminders+tasks, `/tasks` `/done` `/remind`, səhər brifinqi, PTB JobQueue; backup **host-cron**; Tavily deferred)
+- **Phase 5 — Polish** ⏳ NÖVBƏTİ (rate-limit, cost dashboard, backup verify, `/settings`, `/export`, `/delete`)
 
 ## Metodologiya
 1. Hər fazadan əvvəl qısa plan təsdiqi.

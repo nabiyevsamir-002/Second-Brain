@@ -30,6 +30,9 @@ def _register_common(app: Application, user_filter=None) -> None:
     cmd("id", handlers.whoami)
     cmd("list", handlers.list_cmd)
     cmd("search", handlers.search_cmd)
+    cmd("tasks", handlers.tasks_cmd)
+    cmd("done", handlers.done_cmd)
+    cmd("remind", handlers.remind_cmd)
 
     text_filter = filters.TEXT & ~filters.COMMAND
     voice_filter = filters.VOICE | filters.AUDIO
