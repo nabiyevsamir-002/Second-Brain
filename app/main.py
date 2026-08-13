@@ -9,6 +9,7 @@ from app.bot.telegram_app import build_application
 from app.config import settings
 from app.db import check_database
 from app.logging_conf import configure_logging, get_logger
+from app.providers.factory import init_providers
 
 configure_logging(settings.log_level, settings.environment)
 log = get_logger("main")
@@ -44,6 +45,7 @@ def main() -> None:
         allowlist=settings.allowed_ids or "OPEN(boş)",
     )
 
+    init_providers()
     application = build_application(post_init=_post_init)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

@@ -1,10 +1,4 @@
-"""Telegram Application-un qurulması + allowlist.
-
-allowlist (ALLOWED_USER_IDS) doludursa: yalnız o ID-lər bota giriş edir,
-qalanları "unauthorized" cavabı alır.
-allowlist boşdursa: "open mode" — hamı giriş edir (yalnız ilk quraşdırma /
-ID öyrənmək üçün). İstifadədən əvvəl mütləq öz ID-ni əlavə et.
-"""
+"""Telegram Application-un qurulması + allowlist + handler qeydiyyatı."""
 
 from __future__ import annotations
 
@@ -22,6 +16,30 @@ from app.logging_conf import get_logger
 log = get_logger("bot")
 
 
+def _register_common(app: Application, user_filter=None) -> None:
+    """/start /help /id /list + mətn və səs qeyd handler-ləri."""
+
+    def cmd(name, cb):
+        if user_filter is not None:
+            app.add_handler(CommandHandler(name, cb, filters=user_filter))
+        else:
+            app.add_handler(CommandHandler(name, cb))
+
+    cmd("start", handlers.start)
+    cmd("help", handlers.help_cmd)
+    cmd("id", handlers.whoami)
+    cmd("list", handlers.list_cmd)
+
+    text_filter = filters.TEXT & ~filters.COMMAND
+    voice_filter = filters.VOICE | filters.AUDIO
+    if user_filter is not None:
+        text_filter = text_filter & user_filter
+        voice_filter = voice_filter & user_filter
+
+    app.add_handler(MessageHandler(text_filter, handlers.note_text))
+    app.add_handler(MessageHandler(voice_filter, handlers.note_voice))
+
+
 def build_application(post_init=None) -> Application:
     builder = Application.builder().token(settings.telegram_bot_token)
     if post_init is not None:
@@ -29,29 +47,14 @@ def build_application(post_init=None) -> Application:
     app = builder.build()
 
     allowed = settings.allowed_ids
-
     if allowed:
         user_filter = filters.User(user_id=allowed)
-
-        app.add_handler(CommandHandler("start", handlers.start, filters=user_filter))
-        app.add_handler(CommandHandler("help", handlers.help_cmd, filters=user_filter))
-        app.add_handler(CommandHandler("id", handlers.whoami, filters=user_filter))
-        app.add_handler(
-            MessageHandler(
-                filters.TEXT & ~filters.COMMAND & user_filter, handlers.echo
-            )
-        )
+        _register_common(app, user_filter)
         # Allowlist-də olmayan hər kəs -> unauthorized.
         app.add_handler(MessageHandler(~user_filter, handlers.unauthorized))
         log.info("allowlist_enabled", allowed_ids=allowed)
     else:
-        # allowlist boş — bootstrap/open mode.
-        app.add_handler(CommandHandler("start", handlers.start))
-        app.add_handler(CommandHandler("help", handlers.help_cmd))
-        app.add_handler(CommandHandler("id", handlers.whoami))
-        app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.echo)
-        )
+        _register_common(app, None)
         log.warning(
             "allowlist_empty_open_mode",
             hint="ALLOWED_USER_IDS boşdur — /id ilə öz ID-ni öyrən və .env-ə yaz.",
