@@ -15,6 +15,7 @@ və **növbəti addımı** saxlayır.
 | **Phase 4 (proactive)** | `create_reminder`+`create_task` agent tool-ları, PTB JobQueue scheduler (reminder çatdırılması hər 60s + səhər brifinqi 08:00), `/tasks` `/done` `/remind`, Asia/Baku tz | `07d7e91` |
 | **Phase 5 (polish)** | cost tracking (agent+haiku+embed+stt loglanır, `app/pricing.py`), `/stats`, `/export` (Markdown fayl), `/delete <id>`+`/delete all` (inline təsdiq), `/settings` (brifinq aç/söndür + saat, JSONB) | `2a9d5c3` |
 | **Phase 3 (voice reply)** | 🔊 Azure `az-AZ` TTS səsli cavab: `AzureTTSProvider` (OGG/Opus, sync SDK→`asyncio.to_thread`), `/voice` əmri (aç/söndür + Babek/Banu seçimi + `test`), per-user setting (`voice_reply`/`voice_name` JSONB), `_run_agent`-ə inteqrasiya (mətn + səsli qeyd), `_clean_for_speech` (sitat/markdown/emoji təmizlə), TTS cost tracking (`tts_cost`, kind=`tts`) | `07d362a` |
+| **Web search (Tavily)** | 🌐 `web_search` agent tool + `TavilySearchProvider` (AsyncTavilyClient), factory-də şərti qeydiyyat (`TAVILY_API_KEY`), system prompt-da İNTERNET AXTARIŞ niyyəti (şəxsi=search_notes, internet=web_search), mənbə URL-li cavab, cost tracking (`search_cost`, kind=`search`) | `ea6b802` |
 
 ## ☁️ GitHub (2026-08-13)
 - Repo: **https://github.com/nebiyevsamir002-star/AI-Assistant** (public).
@@ -36,7 +37,7 @@ brifinq mətni qurulur; canlı reminder Telegram-a real çatdırılıb.
 ## 🔑 Açarlar (`.env`, git izləmir)
 - ✅ `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_IDS=6389536587`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 - ✅ `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION=germanywestcentral` — əlavə olundu, TTS canlı işləyir (`AZURE_TTS_VOICE` default `az-AZ-BabekNeural`).
-- 🟡 `TAVILY_API_KEY` — **Samir açarı ƏLDƏ HAZIRDIR**, hələ `.env`-ə əlavə edilməyib (web search üçün).
+- ✅ `TAVILY_API_KEY` — əlavə olundu, web search canlı işləyir.
 
 ## 🏗️ Kod strukturu (əsas)
 ```
@@ -101,13 +102,13 @@ docker compose run --rm -e RUN_MIGRATIONS=0 bot python -c "..."
 - `/voice` (toggle), `/voice babek|banu` (səs seç+aç), `/voice test` (nümunə), `/voice off`.
 - Smoke test: `scripts/tts_smoke.py` KEÇDİ (hər iki səs, OGG magic təsdiq).
 
-## Qalıqlar / növbəti:
-- **Rate-limit** (tək istifadəçi üçün aşağı prioritet — runaway API xərcinə qarşı sadə throttle).
-- **Backup verify** (son backup-ın bərpa oluna bildiyini yoxlayan skript).
+## ✅ Web search tamamlandı (Tavily). Bütün planlaşdırılmış AI feature-lər hazırdır.
 
-**⏭️ NÖVBƏTİ ADDIM:**
-🌐 **Tavily web search** (`web_search` tool + provider) — `TAVILY_API_KEY`-i `.env`-ə (Samir açarı hazırdır),
-`tavily-python>=0.5`, `app/tools/web_search.py`, agentə əlavə (`BrainAgent.__init__`-də register + system prompt-da niyyət).
+## Qalıqlar / növbəti (Samir seçimi):
+- **🚀 VPS production deploy** — hazırda bot Mac-də `docker compose` ilə işləyir; DigitalOcean
+  VPS-ə köçürmək (Docker + compose + `.env`, systemd/`restart: unless-stopped`).
+- **🌙 Gecə backup → HOST CRON** (VPS-də manual sətir, aşağı bax) + **backup verify** skripti.
+- **⏱️ Rate-limit** (tək istifadəçi üçün aşağı prioritet — runaway API xərcinə qarşı sadə throttle).
 Əvvəl qısa plan təsdiqi (metodologiya).
 
 ## İş üsulu

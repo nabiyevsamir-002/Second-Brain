@@ -33,7 +33,7 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
 - STT: OpenAI Whisper (`whisper-1`, language=`az`); Azure `az-AZ` STT (fallback — hələ yox)
 - TTS: Azure Speech `az-AZ` (BabekNeural/BanuNeural) — ✅ (OGG/Opus, `/voice`)
 - Embedding: OpenAI `text-embedding-3-small` (1536 ölçü) — **LOCKED, dəyişmə**
-- Web search: Tavily (hələ yox)
+- Web search: Tavily — ✅ (`web_search` agent tool)
 - PDF/DOCX: pypdf + python-docx
 - Scheduler: PTB JobQueue (reminders çatdırılması + səhər brifinqi) — ✅ Phase 4
 - DB: SQLAlchemy (async) + Alembic; struktur log (structlog); config: pydantic-settings
@@ -64,7 +64,7 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 - **Phase 1 — MVP** ✅ (səs/mətn → təmizlə → saxla; `/list`; Whisper AZ)
 - **Phase 2 — RAG Brain** ✅ (embedding, `/search`, chat + citations, auto-kateqoriya, əlaqəli qeyd)
 - **Phase 3 — Capture+** ✅ (forward→save, PDF/DOCX indeks, Azure `az-AZ` TTS səsli cavab `/voice`)
-- **Phase 4 — Proactive** ✅ (reminders+tasks, `/tasks` `/done` `/remind`, səhər brifinqi, PTB JobQueue; backup **host-cron**; Tavily deferred)
+- **Phase 4 — Proactive** ✅ (reminders+tasks, `/tasks` `/done` `/remind`, səhər brifinqi, PTB JobQueue; backup **host-cron**; Tavily `web_search` ✅)
 - **Phase 5 — Polish** ✅ (cost tracking + `/stats`, `/export`, `/delete`, `/settings`; rate-limit + backup verify deferred)
 
 ## Metodologiya
