@@ -17,22 +17,34 @@ və **növbəti addımı** saxlayır.
 | **Phase 3 (voice reply)** | 🔊 Azure `az-AZ` TTS səsli cavab: `AzureTTSProvider` (OGG/Opus, sync SDK→`asyncio.to_thread`), `/voice` əmri (aç/söndür + Babek/Banu seçimi + `test`), per-user setting (`voice_reply`/`voice_name` JSONB), `_run_agent`-ə inteqrasiya (mətn + səsli qeyd), `_clean_for_speech` (sitat/markdown/emoji təmizlə), TTS cost tracking (`tts_cost`, kind=`tts`) | `07d362a` |
 | **Web search (Tavily)** | 🌐 `web_search` agent tool + `TavilySearchProvider` (AsyncTavilyClient), factory-də şərti qeydiyyat (`TAVILY_API_KEY`), system prompt-da İNTERNET AXTARIŞ niyyəti (şəxsi=search_notes, internet=web_search), mənbə URL-li cavab, cost tracking (`search_cost`, kind=`search`) | `ea6b802` |
 
-## ☁️ GitHub (2026-08-13)
-- Repo: **https://github.com/nebiyevsamir002-star/AI-Assistant** (public).
-- Branch **`master` → `main`** adlandırıldı, push edildi (tracking qurulub → sadəcə `git push`).
-- HTTPS auth osxkeychain-dəki GitHub token ilə işləyir (SSH açarı GitHub-da yoxdur).
-- `.env` push OLUNMADI (gitignore) — yalnız `.env.example`/`SETUP.md` placeholder-ləri.
+## ☁️ GitHub + Deploy (2026-08-13)
+- Repo: **https://github.com/nebiyevsamir002-star/AI-Assistant** — **PRIVATE**.
+- Branch **`main`** (tracking qurulub → sadəcə `git push`). HTTPS auth osxkeychain token.
+- `.env` push OLUNMUR (gitignore) — açarlar yalnız lokal + server `.env`-dədir.
+- **🚀 PRODUCTION: DigitalOcean VPS** — Frankfurt (`fra1`), 4vCPU/8GB, Ubuntu 24.04,
+  IP `167.71.48.123`, repo `/root/AI-Assistant`, `docker compose` ilə işləyir.
+- **CI/CD: GitHub Actions → SSH** ([.github/workflows/deploy.yml](.github/workflows/deploy.yml)):
+  `main`-ə push → `appleboy/ssh-action` server-ə SSH → `git pull --ff-only` +
+  `docker compose up -d --build bot` + `docker image prune`. **Canlı test: run #2 Success ✅.**
+  App açarları GitHub-a GETMİR (yalnız server `.env`); GitHub secrets = `SSH_HOST`/`SSH_USER`/`SSH_KEY`.
+  İki açar: server→GitHub **deploy key** (`~/.ssh/id_ed25519`, repo Deploy keys, read-only, `git pull` üçün);
+  Actions→server **`gh_actions`** (private → `SSH_KEY` secret, public → server authorized_keys).
+- **Gecə backup cron** server-də quruldu: `15 3 * * * cd /root/AI-Assistant && ./scripts/backup.sh ...`.
 
-**Canlı vəziyyət:** bot `docker compose` ilə işləyir; loglar:
-`providers_initialized agent=True embed=True llm=True stt=True`,
-`database_ready pgvector=True`,
-`scheduler_ready briefing_check=hourly briefing_default='08:00 Asia/Baku' reminder_interval_sec=60`,
-`Application started`.
-Samir Telegram-da mətn+səs+link+sənəd göndərib test edib — hər şey işləyir,
-Whisper AZ dəqiqliyi **yaxşıdır** (Azure STT fallback lazım deyil).
-Phase 4 smoke test (`scripts/phase4_smoke.py`) keçib: agent nisbi vaxtı düz
-hesablayır (2 saat→+119dəq), task deadline parse olunur, çatdırılma seçimi düz,
-brifinq mətni qurulur; canlı reminder Telegram-a real çatdırılıb.
+**⚠️ TƏK INSTANS QAYDASI:** Bir Telegram token = yalnız bir polling instansı. Server canlı olduğu üçün
+**Mac-dəki bot DAYANDIRILIB** (`docker compose stop bot`). İkisini eyni token ilə eyni anda işlətmə →
+`Conflict: terminated by other getUpdates` xətası. Lokal işləmək üçün Mac-də ayrı test token istifadə et.
+
+## 💰 Model dəyişikliyi (xərc balansı, 2026-08-13)
+- **`CLAUDE_MODEL_MAIN=claude-haiku-4-5`** edildi (əvvəl `claude-sonnet-5`) — `.env` dəyişikliyi, kod yox.
+- Səbəb: agent beyni HƏR mesajda işləyir (əsas xərc); Haiku ~**3× ucuz** (`$1/$5` vs Sonnet `$3/$15`),
+  Azərbaycanca güclü qalır (açıq modellərdən yaxşı). Qeyd təmizləmə onsuz da Haiku-da idi.
+- **⏳ Samir Haiku keyfiyyətini canlı test edir.** Çətin RAG suallarında düşərsə → seçici Sonnet
+  eskalasiyası (sadə=Haiku, çətin=Sonnet), ya da `.env`-də bir dəyişikliklə Sonnet-ə qaytar.
+
+**Canlı vəziyyət (server):** `providers_initialized agent=True embed=True llm=True search=True stt=True tts=True`,
+`database_ready pgvector=True`, `scheduler_ready`, `Application started`. Bütün AI feature-lər (RAG, reminders,
+tasks, brifinq, TTS səsli cavab, Tavily web search) canlı. Whisper AZ dəqiqliyi yaxşı (Azure STT fallback lazım deyil).
 
 ## 🔑 Açarlar (`.env`, git izləmir)
 - ✅ `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_IDS=6389536587`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
