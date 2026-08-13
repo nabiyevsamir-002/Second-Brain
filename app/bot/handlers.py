@@ -19,6 +19,7 @@ from app.providers.registry import providers
 from app.repositories.messages import add_message, get_recent_messages
 from app.repositories.notes import list_notes, search_notes_by_vector
 from app.repositories.users import get_or_create_user
+from app.services.ingest_service import ingest_document, ingest_url
 from app.services.notes_service import capture_note
 
 log = get_logger("bot")
@@ -38,7 +39,10 @@ HELP = (
     "/list — son qeydlər\n"
     "/search <söz> — qeydlərdə axtarış\n"
     "/id — Telegram ID\n\n"
-    "Mətn/səs göndər → agent qeyd saxlayır və ya sualına cavab verir."
+    "*Nə göndərə bilərsən:*\n"
+    "• 📝 mətn / 🎙 səs → qeyd və ya sual\n"
+    "• 🔗 link → səhifə xülasələnib saxlanılır\n"
+    "• 📄 PDF / DOCX → mətn indeksləib axtarışa əlavə olunur"
 )
 
 
@@ -91,9 +95,96 @@ async def _run_agent(update: Update, raw_text: str, source: NoteSource, prefix: 
     await update.message.reply_text(prefix + reply)
 
 
-async def note_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def _first_url(msg) -> str | None:
+    for entity in msg.entities or []:
+        if entity.type == "url":
+            return msg.text[entity.offset : entity.offset + entity.length]
+        if entity.type == "text_link":
+            return entity.url
+    return None
+
+
+def _is_forward(msg) -> bool:
+    return bool(getattr(msg, "forward_origin", None) or getattr(msg, "forward_date", None))
+
+
+async def _ingest_url_and_reply(update: Update, url: str) -> None:
+    user = update.effective_user
+    if not (providers.has("llm") and providers.has("embed")):
+        await update.message.reply_text("🔗 Link emalı üçün AI açarları lazımdır.")
+        return
     await update.message.chat.send_action("typing")
-    await _run_agent(update, update.message.text, NoteSource.text)
+    try:
+        async with SessionLocal() as session:
+            db_user = await get_or_create_user(session, user.id, name=user.full_name)
+            note = await ingest_url(
+                session, providers.get("llm"), providers.get("embed"), db_user.telegram_id, url
+            )
+            await session.commit()
+            reply = f"🔗 Linkdən qeyd #{note.id} yaradıldı."
+            if note.category:
+                reply += f"\n🏷 {note.category}"
+            if note.summary:
+                reply += f"\n📝 {note.summary}"
+    except Exception as exc:  # noqa: BLE001
+        log.error("url_ingest_failed", url=url, error=str(exc))
+        await update.message.reply_text(f"🔗 Link açıla bilmədi: {exc}")
+        return
+    await update.message.reply_text(reply)
+
+
+async def note_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.message
+    url = _first_url(msg)
+    if url:
+        await _ingest_url_and_reply(update, url)
+        return
+    await update.message.chat.send_action("typing")
+    source = NoteSource.forward if _is_forward(msg) else NoteSource.text
+    await _run_agent(update, msg.text, source)
+
+
+async def document_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    doc = update.message.document
+    filename = doc.file_name or "sənəd"
+    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    if ext not in ("pdf", "docx"):
+        await update.message.reply_text("📎 Yalnız PDF və DOCX dəstəklənir.")
+        return
+    if not (providers.has("llm") and providers.has("embed")):
+        await update.message.reply_text("📎 Sənəd emalı üçün AI açarları lazımdır.")
+        return
+
+    await update.message.chat.send_action("typing")
+    tg_file = await context.bot.get_file(doc.file_id)
+    data = bytes(await tg_file.download_as_bytearray())
+
+    try:
+        async with SessionLocal() as session:
+            db_user = await get_or_create_user(
+                session, update.effective_user.id, name=update.effective_user.full_name
+            )
+            notes, summary = await ingest_document(
+                session,
+                providers.get("llm"),
+                providers.get("embed"),
+                db_user.telegram_id,
+                filename,
+                data,
+            )
+            await session.commit()
+    except ValueError as exc:
+        await update.message.reply_text(f"📄 Sənəd emal olunmadı: {exc}")
+        return
+    except Exception as exc:  # noqa: BLE001
+        log.error("document_ingest_failed", filename=filename, error=str(exc))
+        await update.message.reply_text(f"📄 Sənəd emalında xəta: {exc}")
+        return
+
+    reply = f"📄 *{filename}* — {len(notes)} hissə indeksləndi."
+    if summary:
+        reply += f"\n📝 {summary}"
+    await update.message.reply_markdown(reply)
 
 
 async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
