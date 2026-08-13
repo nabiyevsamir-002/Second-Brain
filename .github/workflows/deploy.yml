@@ -24,7 +24,6 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           # Fərqli SSH portu istifadə edirsənsə, SSH_PORT secret əlavə et və
           # aşağıdakı sətri aç:  port: ${{ secrets.SSH_PORT }}
-          script_stop: true
           script: |
             set -euo pipefail
             cd /root/AI-Assistant
