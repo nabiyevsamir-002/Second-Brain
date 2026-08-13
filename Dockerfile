@@ -6,6 +6,15 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# Azure Speech SDK üçün native runtime kitabxanaları (az-AZ TTS).
+# TTS çıxışı üçün GStreamer LAZIM DEYİL (o, yalnız sıxılmış STT girişi üçündür).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libasound2 \
+        libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
 # pyproject + app source, sonra quraşdır.
 COPY pyproject.toml alembic.ini ./
 COPY app ./app

@@ -31,7 +31,7 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
 - Python 3.11+ (konteynerdə 3.12), python-telegram-bot v21 (async)
 - Claude API: `claude-sonnet-5` (əsas), `claude-haiku-4-5` (sadə tapşırıqlar)
 - STT: OpenAI Whisper (`whisper-1`, language=`az`); Azure `az-AZ` STT (fallback — hələ yox)
-- TTS: Azure Speech `az-AZ` (BabekNeural/BanuNeural) — hələ yox
+- TTS: Azure Speech `az-AZ` (BabekNeural/BanuNeural) — ✅ (OGG/Opus, `/voice`)
 - Embedding: OpenAI `text-embedding-3-small` (1536 ölçü) — **LOCKED, dəyişmə**
 - Web search: Tavily (hələ yox)
 - PDF/DOCX: pypdf + python-docx
@@ -50,7 +50,7 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 
 ## Əmrlər
 `/start` `/help` `/list` `/search` `/id` `/tasks` `/done` `/remind`
-`/stats` `/export` `/delete` `/settings` (hazır) · `/voice` (gələcək — Azure TTS)
+`/stats` `/export` `/delete` `/settings` `/voice` (hazır — Azure `az-AZ` səsli cavab)
 
 ## Təhlükəsizlik
 - Allowlist — yalnız Samir-in telegram_id (`ALLOWED_USER_IDS`).
@@ -63,7 +63,7 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 - **Phase 0 — Foundation** ✅ (Docker/Postgres/pgvector, config, skelet, echo bot)
 - **Phase 1 — MVP** ✅ (səs/mətn → təmizlə → saxla; `/list`; Whisper AZ)
 - **Phase 2 — RAG Brain** ✅ (embedding, `/search`, chat + citations, auto-kateqoriya, əlaqəli qeyd)
-- **Phase 3 — Capture+** ✅ qismən (forward→save, PDF/DOCX indeks; **Azure TTS səsli cavab qalıb**)
+- **Phase 3 — Capture+** ✅ (forward→save, PDF/DOCX indeks, Azure `az-AZ` TTS səsli cavab `/voice`)
 - **Phase 4 — Proactive** ✅ (reminders+tasks, `/tasks` `/done` `/remind`, səhər brifinqi, PTB JobQueue; backup **host-cron**; Tavily deferred)
 - **Phase 5 — Polish** ✅ (cost tracking + `/stats`, `/export`, `/delete`, `/settings`; rate-limit + backup verify deferred)
 

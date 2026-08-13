@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     # --- Azure Speech: az-AZ STT fallback + TTS (Phase 1/3) ---
     azure_speech_key: str = ""
     azure_speech_region: str = ""
+    # Səsli cavab üçün default az-AZ neural səs (BabekNeural=kişi, BanuNeural=qadın).
+    azure_tts_voice: str = "az-AZ-BabekNeural"
 
     # --- Tavily web axtarış (Phase 4) ---
     tavily_api_key: str = ""

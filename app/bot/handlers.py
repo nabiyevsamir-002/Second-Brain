@@ -6,17 +6,20 @@ Mətn/səs → agent niyyəti routing edir (save_note / search_notes) → cavab.
 
 from __future__ import annotations
 
+import io
 import os
+import re
 import tempfile
 from decimal import Decimal
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app.config import settings
 from app.db import SessionLocal
 from app.logging_conf import get_logger
 from app.models import NoteSource
-from app.pricing import stt_cost
+from app.pricing import stt_cost, tts_cost
 from app.providers.registry import providers
 from app.repositories.messages import add_message, count_messages, get_recent_messages
 from app.repositories.notes import (
@@ -58,6 +61,7 @@ HELP = (
     "/export — qeydləri fayl kimi yüklə\n"
     "/delete <id> — qeydi sil (/delete all = hamısı)\n"
     "/settings — brifinq ayarları\n"
+    "/voice — səsli cavab (aç/söndür, səs seç)\n"
     "/id — Telegram ID\n\n"
     "*Nə göndərə bilərsən:*\n"
     "• 📝 mətn / 🎙 səs → qeyd, sual, tapşırıq və ya xatırlatma\n"
@@ -81,6 +85,75 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"🆔 Sənin Telegram ID: {user.id}\n👤 Ad: {user.full_name}"
     )
+
+
+# --- Səsli cavab (Azure az-AZ TTS) ---------------------------------------
+
+# Səs adları — istifadəçi /voice babek | banu ilə seçir.
+AZ_VOICES = {"babek": "az-AZ-BabekNeural", "banu": "az-AZ-BanuNeural"}
+_VOICE_LABELS = {"az-AZ-BabekNeural": "Babek 👨", "az-AZ-BanuNeural": "Banu 👩"}
+MAX_TTS_CHARS = 1500  # uzun cavabları kəs (latency + xərc nəzarəti)
+
+_CITE_RE = re.compile(r"\[#\d+\]")  # RAG sitatları ([#12]) — səsdə oxunmasın
+_MD_RE = re.compile(r"[*_`#>|]")  # Markdown işarələri
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001f000-\U0001faff"  # emoji, simvol, piktoqram blokları
+    "\U00002300-\U000023ff"  # texniki simvollar (⏰ ⌛ ⏳ …)
+    "\U00002600-\U000027bf"  # müxtəlif simvollar + dingbats
+    "\U0001f1e6-\U0001f1ff"  # regional indicator (bayraqlar)
+    "\U00002190-\U000021ff"  # oxlar
+    "\U00002b00-\U00002bff"  # müxtəlif simvol/oxlar
+    "\U0000fe0f"             # variation selector-16
+    "\U0000200d"             # zero-width joiner
+    "]"
+)
+
+
+def _clean_for_speech(text: str) -> str:
+    """Mətni səsə uyğunlaşdır: sitat, markdown və emojiləri təmizlə, kəs."""
+    t = _CITE_RE.sub("", text)
+    t = _EMOJI_RE.sub("", t)
+    t = _MD_RE.sub("", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    if len(t) > MAX_TTS_CHARS:
+        t = t[:MAX_TTS_CHARS].rsplit(" ", 1)[0] + "…"
+    return t
+
+
+def _voice_settings(user_settings: dict | None) -> tuple[bool, str]:
+    """(voice_reply açıqdır?, səs adı) — default söndürülü + config səsi."""
+    s = user_settings or {}
+    enabled = bool(s.get("voice_reply", False))
+    name = s.get("voice_name") or settings.azure_tts_voice
+    return enabled, name
+
+
+async def _speak_reply(update: Update, text: str, voice_name: str | None = None) -> None:
+    """Mətn cavabını Azure TTS ilə səsli qeyd kimi göndər (səssiz uğursuzluq)."""
+    if not providers.has("tts"):
+        return
+    spoken = _clean_for_speech(text)
+    if not spoken:
+        return
+    try:
+        await update.message.chat.send_action("record_voice")
+        audio = await providers.get("tts").synthesize(spoken, voice=voice_name)
+    except Exception as exc:  # noqa: BLE001 — səsli cavab kritik deyil, mətn onsuz da gedib
+        log.error("tts_failed", error=str(exc))
+        return
+
+    try:
+        async with SessionLocal() as session:
+            await log_usage(session, update.effective_user.id, "tts", cost=tts_cost(len(spoken)))
+            await session.commit()
+    except Exception:  # noqa: BLE001 — usage logu kritik deyil
+        pass
+
+    bio = io.BytesIO(audio)
+    bio.name = "reply.ogg"
+    await update.message.reply_voice(voice=bio)
+    log.info("voice_reply_sent", user_id=update.effective_user.id, chars=len(spoken))
 
 
 async def _run_agent(update: Update, raw_text: str, source: NoteSource, prefix: str = "") -> None:
@@ -112,9 +185,14 @@ async def _run_agent(update: Update, raw_text: str, source: NoteSource, prefix: 
         await add_message(session, db_user.telegram_id, "user", raw_text)
         await add_message(session, db_user.telegram_id, "assistant", reply)
         await session.commit()
+        voice_on, voice_name = _voice_settings(db_user.settings)
 
     # Plain text — agent cavabındakı [#id] və s. Markdown-ı pozmasın deyə.
     await update.message.reply_text(prefix + reply)
+
+    # Səsli cavab açıqdırsa — eyni cavabı səsli qeyd kimi də göndər (prefiks/echo yox).
+    if voice_on:
+        await _speak_reply(update, reply, voice_name)
 
 
 def _first_url(msg) -> str | None:
@@ -517,6 +595,67 @@ async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await session.commit()
         s = dict(user.settings or {})
     await update.message.reply_markdown(_settings_text(s), reply_markup=_settings_keyboard(s))
+
+
+def _voice_status_text(s: dict) -> str:
+    enabled, name = _voice_settings(s)
+    status = "açıq 🔊" if enabled else "bağlı 🔇"
+    label = _VOICE_LABELS.get(name, name)
+    return (
+        "🔊 *Səsli cavab*\n\n"
+        f"Vəziyyət: *{status}*\n"
+        f"Səs: *{label}*\n\n"
+        "İdarə:\n"
+        "• /voice — aç/söndür\n"
+        "• /voice babek | banu — səsi seç\n"
+        "• /voice test — nümunə səs eşit"
+    )
+
+
+async def voice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    uid = update.effective_user.id
+    if not providers.has("tts"):
+        await update.message.reply_text(
+            "🔇 Səsli cavab deaktivdir (AZURE_SPEECH_KEY/REGION yoxdur)."
+        )
+        return
+
+    arg = (context.args[0].strip().lower() if context.args else "")
+
+    # /voice test — cari səslə nümunə göndər (ayarı dəyişmədən).
+    if arg == "test":
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, uid, name=update.effective_user.full_name)
+            await session.commit()
+            _, name = _voice_settings(user.settings)
+        await _speak_reply(
+            update, "Salam Samir, bu Azərbaycan dilində səsli cavab nümunəsidir.", name
+        )
+        return
+
+    async with SessionLocal() as session:
+        user = await get_or_create_user(session, uid, name=update.effective_user.full_name)
+        s = dict(user.settings or {})
+
+        if arg in AZ_VOICES:  # səs seçimi + səsli cavabı aç
+            s["voice_name"] = AZ_VOICES[arg]
+            s["voice_reply"] = True
+        elif arg == "on":
+            s["voice_reply"] = True
+        elif arg == "off":
+            s["voice_reply"] = False
+        elif arg == "":  # arqumentsiz → toggle
+            s["voice_reply"] = not s.get("voice_reply", False)
+        else:
+            await update.message.reply_text(
+                "İstifadə: /voice  (aç/söndür) · /voice babek|banu · /voice test"
+            )
+            return
+
+        s = await update_settings(session, uid, s)
+        await session.commit()
+
+    await update.message.reply_markdown(_voice_status_text(s))
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

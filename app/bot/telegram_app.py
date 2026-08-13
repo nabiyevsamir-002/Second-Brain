@@ -38,6 +38,7 @@ def _register_common(app: Application, user_filter=None) -> None:
     cmd("export", handlers.export_cmd)
     cmd("delete", handlers.delete_cmd)
     cmd("settings", handlers.settings_cmd)
+    cmd("voice", handlers.voice_cmd)
 
     # Inline düymə callback-ları (/delete təsdiqi, /settings). Düymələr yalnız
     # allowlist istifadəçisinin şəxsi çatında göndərilir.

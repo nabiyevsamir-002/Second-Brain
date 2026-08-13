@@ -25,11 +25,10 @@ dependencies = [
     "beautifulsoup4>=4.12",                       # veb səhifədən mətn çıxarma
     "pypdf>=4.2",                                 # PDF mətn çıxarma
     "python-docx>=1.1",                           # DOCX mətn çıxarma
+    "azure-cognitiveservices-speech>=1.40",       # az-AZ TTS (səsli cavab, Phase 3)
 ]
 
 # --- Future phases (add when we reach them) ---
-# Phase 3 (voice reply):
-#   "azure-cognitiveservices-speech>=1.40"  # az-AZ TTS (səsli cavab) + STT fallback
 # Phase 4 (proactive+tools):
 #   "tavily-python>=0.5"       # web search
 

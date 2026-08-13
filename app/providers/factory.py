@@ -30,6 +30,19 @@ def init_providers() -> None:
         providers.register("embed", OpenAIEmbeddingProvider(settings.openai_api_key))
         providers.register("stt", WhisperSTTProvider(settings.openai_api_key))
 
+    # Azure TTS (səsli cavab) — key + region hər ikisi varsa.
+    if settings.azure_speech_key and settings.azure_speech_region:
+        from app.providers.tts_azure import AzureTTSProvider
+
+        providers.register(
+            "tts",
+            AzureTTSProvider(
+                settings.azure_speech_key,
+                settings.azure_speech_region,
+                settings.azure_tts_voice,
+            ),
+        )
+
     # Tək tool-using agent — llm + embedder hər ikisi varsa qurulur.
     if providers.has("llm") and providers.has("embed"):
         from app.agent.agent import BrainAgent
@@ -41,5 +54,6 @@ def init_providers() -> None:
         llm=providers.has("llm"),
         embed=providers.has("embed"),
         stt=providers.has("stt"),
+        tts=providers.has("tts"),
         agent=providers.has("agent"),
     )
