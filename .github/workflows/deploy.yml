@@ -1,0 +1,33 @@
+name: Deploy to VPS
+
+# main-ə hər push-da (və ya əl ilə) server-ə SSH edib botu yenidən qurur.
+# App açarları (ANTHROPIC/OPENAI/TELEGRAM/AZURE/TAVILY) GitHub-a GETMİR —
+# onlar yalnız server-dəki .env faylındadır. GitHub sadəcə deploy-u tetikleyir.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {} # Actions → Deploy to VPS → Run workflow (əl ilə)
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false # deploy-lar bir-birini kəsməsin, növbə ilə getsin
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          # Fərqli SSH portu istifadə edirsənsə, SSH_PORT secret əlavə et və
+          # aşağıdakı sətri aç:  port: ${{ secrets.SSH_PORT }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /root/AI-Assistant
+            git pull --ff-only origin main
+            docker compose up -d --build bot
+            docker image prune -f
