@@ -13,7 +13,13 @@ və **növbəti addımı** saxlayır.
 | **Phase 2 (RAG)** | Tək tool-using Claude agent (intent routing), `save_note`+`search_notes` tools, RAG chat + `[#id]` citations, `/search`, chat yaddaşı (messages), əlaqəli qeyd kəşfi (note_links) | `d88f0b2` |
 | **Phase 3 (capture+)** | Link→fetch+xülasə+saxla, forward→save, PDF/DOCX indeks (chunk→batch embed) | `7202fd3` |
 | **Phase 4 (proactive)** | `create_reminder`+`create_task` agent tool-ları, PTB JobQueue scheduler (reminder çatdırılması hər 60s + səhər brifinqi 08:00), `/tasks` `/done` `/remind`, Asia/Baku tz | `07d7e91` |
-| **Phase 5 (polish)** | cost tracking (agent+haiku+embed+stt loglanır, `app/pricing.py`), `/stats`, `/export` (Markdown fayl), `/delete <id>`+`/delete all` (inline təsdiq), `/settings` (brifinq aç/söndür + saat, JSONB) | *(bu commit)* |
+| **Phase 5 (polish)** | cost tracking (agent+haiku+embed+stt loglanır, `app/pricing.py`), `/stats`, `/export` (Markdown fayl), `/delete <id>`+`/delete all` (inline təsdiq), `/settings` (brifinq aç/söndür + saat, JSONB) | `2a9d5c3` |
+
+## ☁️ GitHub (2026-08-13)
+- Repo: **https://github.com/nebiyevsamir002-star/AI-Assistant** (public).
+- Branch **`master` → `main`** adlandırıldı, push edildi (tracking qurulub → sadəcə `git push`).
+- HTTPS auth osxkeychain-dəki GitHub token ilə işləyir (SSH açarı GitHub-da yoxdur).
+- `.env` push OLUNMADI (gitignore) — yalnız `.env.example`/`SETUP.md` placeholder-ləri.
 
 **Canlı vəziyyət:** bot `docker compose` ilə işləyir; loglar:
 `providers_initialized agent=True embed=True llm=True stt=True`,
@@ -28,8 +34,8 @@ brifinq mətni qurulur; canlı reminder Telegram-a real çatdırılıb.
 
 ## 🔑 Açarlar (`.env`, git izləmir)
 - ✅ `TELEGRAM_BOT_TOKEN`, `ALLOWED_USER_IDS=6389536587`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
-- ⛔ `AZURE_SPEECH_KEY` (boş) — səsli cavab üçün
-- ⛔ `TAVILY_API_KEY` (boş) — web search üçün
+- 🟡 `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION` — **Samir açarı ƏLDƏ HAZIRDIR**, hələ `.env`-ə əlavə edilməyib (səsli cavab üçün).
+- 🟡 `TAVILY_API_KEY` — **Samir açarı ƏLDƏ HAZIRDIR**, hələ `.env`-ə əlavə edilməyib (web search üçün).
 
 ## 🏗️ Kod strukturu (əsas)
 ```
@@ -89,11 +95,14 @@ docker compose run --rm -e RUN_MIGRATIONS=0 bot python -c "..."
 - **`/voice`** (Azure `az-AZ` TTS səsli cavab — `AZURE_SPEECH_KEY` gələndə, deferred).
 - **Tavily web search** (`web_search` tool + provider — `TAVILY_API_KEY` gələndə, deferred).
 
-**⏭️ NÖVBƏTİ:** yuxarıdakılardan seç (və ya yeni istiqamət). Əsas MVP + proaktiv +
-polish tam işləkdir.
-
-**Deferred (açar lazımdır):** Azure `az-AZ` TTS (`AZURE_SPEECH_KEY`);
-Tavily web search (`TAVILY_API_KEY`).
+**⏭️ NÖVBƏTİ ADDIM (Samir açarları hazırladı — artıq deferred deyil):**
+1. 🔊 **Azure `az-AZ` TTS səsli cavab** (`/voice` / `speak_reply` tool) — ən dəyərli qalan feature.
+   Addımlar: `AZURE_SPEECH_KEY`+`AZURE_SPEECH_REGION`-ı `.env`-ə əlavə et → `pyproject.toml`-a
+   `azure-cognitiveservices-speech>=1.40` → `app/providers/tts_azure.py` (BabekNeural/BanuNeural)
+   → factory-də qeydiyyat → handler/agent-də səsli cavab (voice note yola OGG/MP3).
+2. 🌐 **Tavily web search** (`web_search` tool + provider) — `TAVILY_API_KEY`-i `.env`-ə,
+   `tavily-python>=0.5`, `app/tools/web_search.py`, agentə əlavə.
+Əvvəl qısa plan təsdiqi (metodologiya). Hansı birindən başlamaq Samir-in seçimidir.
 
 ## İş üsulu
 Hər fazada: qısa plan → kod (kiçik test edilə bilən addımlar) → açarlarla canlı test
