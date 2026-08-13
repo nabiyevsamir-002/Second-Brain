@@ -25,6 +25,22 @@ async def get_user(session: AsyncSession, telegram_id: int) -> User | None:
     return await session.get(User, telegram_id)
 
 
+async def update_settings(
+    session: AsyncSession, telegram_id: int, changes: dict
+) -> dict:
+    """settings JSONB-ni birləşdir və yenilə (yeni dict = dəyişiklik detect olunur)."""
+    user = await session.get(User, telegram_id)
+    if user is None:
+        user = User(telegram_id=telegram_id, settings=dict(changes))
+        session.add(user)
+        await session.flush()
+        return user.settings
+    merged = {**(user.settings or {}), **changes}
+    user.settings = merged  # yeni obyekt təyin et — SQLAlchemy dəyişikliyi görsün
+    await session.flush()
+    return merged
+
+
 async def list_users(session: AsyncSession) -> list[User]:
     result = await session.execute(select(User).order_by(User.created_at))
     return list(result.scalars().all())

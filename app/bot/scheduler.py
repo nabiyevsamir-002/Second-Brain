@@ -9,7 +9,7 @@ Gecə pg_dump backup host cron ilə işləyir (scripts/backup.sh) — burada dey
 
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 
 from telegram.ext import Application, ContextTypes
 
@@ -20,13 +20,13 @@ from app.models import TaskStatus
 from app.repositories.notes import count_notes_since
 from app.repositories.reminders import due_reminders, mark_sent, reminders_between
 from app.repositories.tasks import list_open_tasks
-from app.repositories.users import get_user
+from app.repositories.users import get_user, update_settings
 from app.timeutils import fmt_local, now_local, now_utc
 
 log = get_logger("scheduler")
 
 REMINDER_INTERVAL_SEC = 60
-BRIEFING_HOUR = 8  # local (Asia/Baku)
+BRIEFING_DEFAULT_HOUR = 8  # local (Asia/Baku) — istifadəçi /settings ilə dəyişə bilər
 
 
 async def deliver_due_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -95,22 +95,43 @@ async def _build_briefing(session, user_id: int) -> str:
     return "\n".join(lines).strip()
 
 
-async def morning_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Hər səhər allowlist-dəki istifadəçilərə günün icmalını göndərir."""
+async def briefing_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Saatbaşı: hər istifadəçinin brifinq saatı gəlibsə (və aktivdirsə) göndərir.
+
+    Per-user settings: briefing_enabled (default True), briefing_hour (default 8).
+    Günə bir dəfə göndərilməsi üçün settings-də son göndərilmə tarixi saxlanılır.
+    """
     recipients = settings.allowed_ids
     if not recipients:
-        log.info("briefing_skipped_no_recipients")
         return
+    local = now_local()
+    today = local.date().isoformat()
+
     async with SessionLocal() as session:
         for uid in recipients:
+            user = await get_user(session, uid)
+            s = (user.settings if user else {}) or {}
+            if not s.get("briefing_enabled", True):
+                continue
+            if int(s.get("briefing_hour", BRIEFING_DEFAULT_HOUR)) != local.hour:
+                continue
+            if s.get("briefing_last_sent") == today:
+                continue  # bu gün artıq göndərilib
             try:
                 text = await _build_briefing(session, uid)
-                await context.bot.send_message(
-                    chat_id=uid, text=text, parse_mode="Markdown"
-                )
-                log.info("briefing_sent", user_id=uid)
+                await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown")
+                await update_settings(session, uid, {"briefing_last_sent": today})
+                log.info("briefing_sent", user_id=uid, hour=local.hour)
             except Exception as exc:  # noqa: BLE001
                 log.warning("briefing_failed", user_id=uid, error=str(exc))
+        await session.commit()
+
+
+def _secs_to_next_hour() -> int:
+    """İndidən növbəti tam saata (:00) qədər saniyə (tick-i saat başına düzləmək üçün)."""
+    now = now_local()
+    delta = 3600 - (now.minute * 60 + now.second)
+    return delta if delta > 0 else 3600
 
 
 def setup_jobs(application: Application) -> None:
@@ -126,13 +147,15 @@ def setup_jobs(application: Application) -> None:
         first=15,
         name="deliver_due_reminders",
     )
-    jq.run_daily(
-        morning_briefing,
-        time=time(hour=BRIEFING_HOUR, minute=0, tzinfo=settings.tz),
-        name="morning_briefing",
+    jq.run_repeating(
+        briefing_tick,
+        interval=3600,
+        first=_secs_to_next_hour(),
+        name="briefing_tick",
     )
     log.info(
         "scheduler_ready",
         reminder_interval_sec=REMINDER_INTERVAL_SEC,
-        briefing_at=f"{BRIEFING_HOUR:02d}:00 {settings.timezone}",
+        briefing_default=f"{BRIEFING_DEFAULT_HOUR:02d}:00 {settings.timezone}",
+        briefing_check="hourly",
     )

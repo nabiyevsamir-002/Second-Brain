@@ -15,9 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.logging_conf import get_logger
 from app.models import Note, NoteSource
+from app.pricing import embed_cost
 from app.providers.llm_claude import ClaudeLLMProvider
 from app.repositories.notes import create_note
-from app.repositories.usage import log_usage
+from app.repositories.usage import log_llm_usage, log_usage
 
 log = get_logger("notes")
 
@@ -61,8 +62,7 @@ async def _clean_and_categorize(
     )
     meta = _parse_json(llm.text_of(resp))
     try:
-        tokens = (resp.usage.input_tokens or 0) + (resp.usage.output_tokens or 0)
-        await log_usage(session, user_id, "llm", tokens=tokens)
+        await log_llm_usage(session, user_id, settings.claude_model_fast, resp.usage)
     except Exception:  # noqa: BLE001 — usage logu kritik deyil
         pass
     return meta
@@ -96,9 +96,8 @@ async def capture_note(
         text_to_embed = cleaned_text or raw_text
         embedding = await embedder.embed_one(text_to_embed)
         try:
-            await log_usage(
-                session, user_id, "embed", tokens=getattr(embedder, "last_total_tokens", 0)
-            )
+            etoks = getattr(embedder, "last_total_tokens", 0) or 0
+            await log_usage(session, user_id, "embed", tokens=etoks, cost=embed_cost(etoks))
         except Exception:  # noqa: BLE001
             pass
 

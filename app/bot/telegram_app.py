@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
     filters,
@@ -33,6 +34,14 @@ def _register_common(app: Application, user_filter=None) -> None:
     cmd("tasks", handlers.tasks_cmd)
     cmd("done", handlers.done_cmd)
     cmd("remind", handlers.remind_cmd)
+    cmd("stats", handlers.stats_cmd)
+    cmd("export", handlers.export_cmd)
+    cmd("delete", handlers.delete_cmd)
+    cmd("settings", handlers.settings_cmd)
+
+    # Inline düymə callback-ları (/delete təsdiqi, /settings). Düymələr yalnız
+    # allowlist istifadəçisinin şəxsi çatında göndərilir.
+    app.add_handler(CallbackQueryHandler(handlers.on_callback))
 
     text_filter = filters.TEXT & ~filters.COMMAND
     voice_filter = filters.VOICE | filters.AUDIO

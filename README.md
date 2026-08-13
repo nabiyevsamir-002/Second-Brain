@@ -3,8 +3,9 @@
 Şəxsi "ikinci beyin": Telegram üzərindən səsli və mətn qeydlər al, sonra
 təbii dildə bu qeydlərlə söhbət et (RAG semantik axtarış).
 
-> **Status:** Phase 4 — Proactive (qeyd/söhbət + RAG axtarış + link/PDF/DOCX
-> ingest + **xatırlatmalar, tapşırıqlar, səhər brifinqi**). Canlı işləyir.
+> **Status:** Phase 5 — Polish (qeyd/söhbət + RAG + link/PDF/DOCX ingest +
+> xatırlatmalar/tapşırıqlar/brifinq + **cost tracking `/stats`, `/export`,
+> `/delete`, `/settings`**). Canlı işləyir.
 
 ## Tex Stack
 - Python 3.11+ · python-telegram-bot v21 (async)
@@ -51,6 +52,12 @@ Bot işləyəndə PTB JobQueue avtomatik qoşulur:
 
 Xatırlatma/tapşırıq təbii dillə yaranır (məs: *«sabah 9-da həkimə zəng etməyi
 xatırlat»*). Əmrlər: `/tasks`, `/done <id>`, `/remind`.
+
+## İdarəetmə (Phase 5)
+- `/stats` — bugün/bu ay üzrə mesaj sayı, token və **təxmini xərc** (LLM/embed/STT).
+- `/export` — bütün qeydlər Markdown fayl kimi yüklənir.
+- `/delete <id>` — qeydi sil (təsdiqlə); `/delete all` — hamısını.
+- `/settings` — səhər brifinqini aç/söndür və saatını dəyiş (`Asia/Baku`).
 
 ## Gecə backup (host cron)
 `scripts/backup.sh` `docker exec ... pg_dump` işlədir — **host cron**-a bağla

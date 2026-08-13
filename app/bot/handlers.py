@@ -8,22 +8,32 @@ from __future__ import annotations
 
 import os
 import tempfile
+from decimal import Decimal
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.db import SessionLocal
 from app.logging_conf import get_logger
-from app.models import NoteSource, TaskStatus
+from app.models import NoteSource
+from app.pricing import stt_cost
 from app.providers.registry import providers
-from app.repositories.messages import add_message, get_recent_messages
-from app.repositories.notes import list_notes, search_notes_by_vector
+from app.repositories.messages import add_message, count_messages, get_recent_messages
+from app.repositories.notes import (
+    all_notes,
+    delete_all_notes,
+    delete_note,
+    get_note,
+    list_notes,
+    search_notes_by_vector,
+)
 from app.repositories.reminders import list_pending
 from app.repositories.tasks import complete_task, list_open_tasks
-from app.repositories.users import get_or_create_user
+from app.repositories.usage import log_usage, usage_totals
+from app.repositories.users import get_or_create_user, update_settings
 from app.services.ingest_service import ingest_document, ingest_url
 from app.services.notes_service import capture_note
-from app.timeutils import fmt_local, now_utc
+from app.timeutils import fmt_local, now_local, now_utc
 
 log = get_logger("bot")
 
@@ -44,6 +54,10 @@ HELP = (
     "/tasks — açıq tapşırıqlar\n"
     "/done <id> — tapşırığı bağla\n"
     "/remind — gələn xatırlatmalar\n"
+    "/stats — istifadə və xərc\n"
+    "/export — qeydləri fayl kimi yüklə\n"
+    "/delete <id> — qeydi sil (/delete all = hamısı)\n"
+    "/settings — brifinq ayarları\n"
     "/id — Telegram ID\n\n"
     "*Nə göndərə bilərsən:*\n"
     "• 📝 mətn / 🎙 səs → qeyd, sual, tapşırıq və ya xatırlatma\n"
@@ -219,6 +233,18 @@ async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("🎙 Səsdən mətn çıxarıla bilmədi, təkrar yoxla.")
         return
 
+    # STT xərcini logla (audio uzunluğuna görə).
+    try:
+        duration = getattr(voice, "duration", 0) or 0
+        async with SessionLocal() as session:
+            await get_or_create_user(
+                session, update.effective_user.id, name=update.effective_user.full_name
+            )
+            await log_usage(session, update.effective_user.id, "stt", cost=stt_cost(duration))
+            await session.commit()
+    except Exception:  # noqa: BLE001 — usage logu kritik deyil
+        pass
+
     log.info("voice_transcribed", user_id=update.effective_user.id, chars=len(transcript))
     await _run_agent(update, transcript, NoteSource.voice, prefix=f"🎙 _{transcript}_\n\n")
 
@@ -322,6 +348,220 @@ async def remind_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     for r in pending:
         lines.append(f"#{r.id} · {fmt_local(r.remind_at)} — {r.text}")
     await update.message.reply_markdown("\n".join(lines))
+
+
+_KIND_LABELS = {
+    "llm": "🧠 LLM",
+    "embed": "🔎 Embedding",
+    "stt": "🎙 STT",
+    "tts": "🔊 TTS",
+    "search": "🌐 Search",
+}
+
+
+def _sum_tokens(totals: dict) -> int:
+    return sum(tok for tok, _ in totals.values())
+
+
+def _sum_cost(totals: dict) -> Decimal:
+    return sum((cost for _, cost in totals.values()), Decimal("0"))
+
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    uid = update.effective_user.id
+    local = now_local()
+    today_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    async with SessionLocal() as session:
+        today = await usage_totals(session, uid, today_start)
+        month = await usage_totals(session, uid, month_start)
+        msgs_today = await count_messages(session, uid, "user", today_start)
+        msgs_month = await count_messages(session, uid, "user", month_start)
+
+    lines = ["📊 *İstifadə statistikası*\n"]
+    lines.append(
+        f"*Bu gün:* {msgs_today} mesaj · {_sum_tokens(today)} token · "
+        f"~${_sum_cost(today):.4f}"
+    )
+    lines.append(
+        f"*Bu ay:* {msgs_month} mesaj · {_sum_tokens(month)} token · "
+        f"~${_sum_cost(month):.4f}"
+    )
+    if month:
+        lines.append("\n_Növ üzrə (bu ay):_")
+        for kind, (tok, cost) in sorted(month.items()):
+            label = _KIND_LABELS.get(kind, kind)
+            lines.append(f"  {label}: {tok} token · ~${cost:.4f}")
+    lines.append("\n_Qiymətlər təxminidir._")
+    await update.message.reply_markdown("\n".join(lines))
+
+
+async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    uid = update.effective_user.id
+    async with SessionLocal() as session:
+        notes = await all_notes(session, uid)
+
+    if not notes:
+        await update.message.reply_text("📭 Export üçün qeyd yoxdur.")
+        return
+
+    lines = [
+        f"# Second Brain — export ({fmt_local(now_local(), with_weekday=False)})",
+        f"Ümumi qeyd: {len(notes)}",
+        "",
+    ]
+    for n in notes:
+        when = fmt_local(n.created_at, with_weekday=False)
+        lines.append(f"## #{n.id} · {when} · {n.source.value}")
+        if n.category:
+            lines.append(f"**Kateqoriya:** {n.category}")
+        if n.tags:
+            lines.append(f"**Tag:** {', '.join(n.tags)}")
+        lines.append("")
+        lines.append(n.cleaned_text or n.raw_text)
+        lines.append("")
+    content = "\n".join(lines)
+
+    fd, path = tempfile.mkstemp(prefix="second_brain_", suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        fname = f"second_brain_{now_local().strftime('%Y%m%d')}.md"
+        with open(path, "rb") as f:
+            await update.message.reply_document(
+                document=f, filename=fname, caption=f"🗂 {len(notes)} qeyd export edildi."
+            )
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    uid = update.effective_user.id
+    arg = (context.args[0] if context.args else "").strip().lower()
+
+    if arg == "all":
+        async with SessionLocal() as session:
+            count = len(await all_notes(session, uid))
+        if not count:
+            await update.message.reply_text("📭 Silinəcək qeyd yoxdur.")
+            return
+        kb = InlineKeyboardMarkup(
+            [[
+                InlineKeyboardButton(f"⚠️ Bəli, {count} qeydi sil", callback_data="del:all"),
+                InlineKeyboardButton("İmtina", callback_data="del:cancel"),
+            ]]
+        )
+        await update.message.reply_text(
+            f"⚠️ BÜTÜN {count} qeydini silmək istəyirsən? Bu geri qaytarıla bilməz.",
+            reply_markup=kb,
+        )
+        return
+
+    if not arg.isdigit():
+        await update.message.reply_text("İstifadə: /delete <id>  və ya  /delete all")
+        return
+
+    note_id = int(arg)
+    async with SessionLocal() as session:
+        note = await get_note(session, note_id)
+    if note is None or note.user_id != uid:
+        await update.message.reply_text(f"🤷 #{note_id} nömrəli qeyd tapılmadı.")
+        return
+
+    preview = (note.summary or note.cleaned_text or note.raw_text)[:120]
+    kb = InlineKeyboardMarkup(
+        [[
+            InlineKeyboardButton("🗑 Sil", callback_data=f"del:one:{note_id}"),
+            InlineKeyboardButton("İmtina", callback_data="del:cancel"),
+        ]]
+    )
+    await update.message.reply_text(f"Silinsin?\n#{note_id}: {preview}", reply_markup=kb)
+
+
+def _settings_text(s: dict) -> str:
+    enabled = s.get("briefing_enabled", True)
+    hour = int(s.get("briefing_hour", 8))
+    status = "açıq 🔔" if enabled else "bağlı 🔕"
+    return (
+        "⚙️ *Ayarlar*\n\n"
+        f"Səhər brifinqi: *{status}*\n"
+        f"Saat: *{hour:02d}:00* (Asia/Baku)\n\n"
+        "Dəyişmək üçün düymələrdən istifadə et:"
+    )
+
+
+def _settings_keyboard(s: dict) -> InlineKeyboardMarkup:
+    enabled = s.get("briefing_enabled", True)
+    hour = int(s.get("briefing_hour", 8))
+    toggle = "🔕 Brifinqi söndür" if enabled else "🔔 Brifinqi aç"
+    rows = [[InlineKeyboardButton(toggle, callback_data="set:toggle")]]
+    hours = [6, 7, 8, 9, 10, 21]
+    btns = [
+        InlineKeyboardButton(("• " if h == hour else "") + f"{h:02d}:00", callback_data=f"set:hour:{h}")
+        for h in hours
+    ]
+    rows.append(btns[:3])
+    rows.append(btns[3:])
+    return InlineKeyboardMarkup(rows)
+
+
+async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with SessionLocal() as session:
+        user = await get_or_create_user(
+            session, update.effective_user.id, name=update.effective_user.full_name
+        )
+        await session.commit()
+        s = dict(user.settings or {})
+    await update.message.reply_markdown(_settings_text(s), reply_markup=_settings_keyboard(s))
+
+
+async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    await q.answer()
+    data = q.data or ""
+    uid = update.effective_user.id
+
+    if data == "del:cancel":
+        await q.edit_message_text("İmtina edildi.")
+        return
+
+    if data.startswith("del:one:"):
+        note_id = int(data.split(":")[2])
+        async with SessionLocal() as session:
+            note = await delete_note(session, uid, note_id)
+            await session.commit()
+        if note is None:
+            await q.edit_message_text(f"🤷 #{note_id} tapılmadı.")
+        else:
+            await q.edit_message_text(f"🗑 Qeyd #{note_id} silindi.")
+        return
+
+    if data == "del:all":
+        async with SessionLocal() as session:
+            n = await delete_all_notes(session, uid)
+            await session.commit()
+        await q.edit_message_text(f"🗑 {n} qeyd silindi.")
+        return
+
+    if data.startswith("set:"):
+        parts = data.split(":")
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, uid)
+            s = dict(user.settings or {})
+            if parts[1] == "toggle":
+                s["briefing_enabled"] = not s.get("briefing_enabled", True)
+            elif parts[1] == "hour":
+                s["briefing_hour"] = int(parts[2])
+            s = await update_settings(session, uid, s)
+            await session.commit()
+        await q.edit_message_text(
+            _settings_text(s), parse_mode="Markdown", reply_markup=_settings_keyboard(s)
+        )
+        return
 
 
 async def unauthorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

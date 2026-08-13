@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Message
@@ -26,3 +28,19 @@ async def get_recent_messages(
     msgs = list(result.scalars().all())
     msgs.reverse()
     return [{"role": m.role, "content": m.content} for m in msgs]
+
+
+async def count_messages(
+    session: AsyncSession, user_id: int, role: str, since: datetime
+) -> int:
+    """`since`-dən bəri müəyyən rol üzrə mesaj sayı (/stats üçün)."""
+    result = await session.execute(
+        select(func.count())
+        .select_from(Message)
+        .where(
+            Message.user_id == user_id,
+            Message.role == role,
+            Message.created_at >= since,
+        )
+    )
+    return int(result.scalar() or 0)

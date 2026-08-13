@@ -49,8 +49,8 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 `usage_log(id, user_id FK, kind, tokens, cost, created_at)`
 
 ## Əmrlər
-`/start` `/help` `/list` `/search` `/id` `/tasks` `/done` `/remind` (hazır) ·
-`/voice` `/settings` `/export` `/delete` (gələcək)
+`/start` `/help` `/list` `/search` `/id` `/tasks` `/done` `/remind`
+`/stats` `/export` `/delete` `/settings` (hazır) · `/voice` (gələcək — Azure TTS)
 
 ## Təhlükəsizlik
 - Allowlist — yalnız Samir-in telegram_id (`ALLOWED_USER_IDS`).
@@ -65,7 +65,7 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 - **Phase 2 — RAG Brain** ✅ (embedding, `/search`, chat + citations, auto-kateqoriya, əlaqəli qeyd)
 - **Phase 3 — Capture+** ✅ qismən (forward→save, PDF/DOCX indeks; **Azure TTS səsli cavab qalıb**)
 - **Phase 4 — Proactive** ✅ (reminders+tasks, `/tasks` `/done` `/remind`, səhər brifinqi, PTB JobQueue; backup **host-cron**; Tavily deferred)
-- **Phase 5 — Polish** ⏳ NÖVBƏTİ (rate-limit, cost dashboard, backup verify, `/settings`, `/export`, `/delete`)
+- **Phase 5 — Polish** ✅ (cost tracking + `/stats`, `/export`, `/delete`, `/settings`; rate-limit + backup verify deferred)
 
 ## Metodologiya
 1. Hər fazadan əvvəl qısa plan təsdiqi.

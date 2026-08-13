@@ -7,6 +7,7 @@ from typing import Any
 from app.logging_conf import get_logger
 from app.models import NoteSource
 from app.providers.llm_claude import ClaudeLLMProvider
+from app.repositories.usage import log_llm_usage
 from app.timeutils import now_local_prompt
 from app.tools.base import ToolContext
 from app.tools.create_reminder import CreateReminderTool
@@ -88,6 +89,10 @@ class BrainAgent:
                 model=self.llm.model_main,
                 max_tokens=2048,
             )
+            try:
+                await log_llm_usage(session, user_id, self.llm.model_main, resp.usage)
+            except Exception:  # noqa: BLE001 — usage logu kritik deyil
+                pass
 
             if resp.stop_reason != "tool_use":
                 text = self.llm.text_of(resp).strip()

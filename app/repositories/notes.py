@@ -51,6 +51,33 @@ async def get_note(session: AsyncSession, note_id: int) -> Note | None:
     return await session.get(Note, note_id)
 
 
+async def all_notes(session: AsyncSession, user_id: int) -> list[Note]:
+    """İstifadəçinin bütün qeydləri, köhnədən yeniyə (export üçün)."""
+    result = await session.execute(
+        select(Note).where(Note.user_id == user_id).order_by(Note.created_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def delete_note(session: AsyncSession, user_id: int, note_id: int) -> Note | None:
+    """Qeydi sil (yalnız sahibinindirsə). Tapılmasa None qaytarır."""
+    note = await session.get(Note, note_id)
+    if note is None or note.user_id != user_id:
+        return None
+    await session.delete(note)
+    await session.flush()
+    return note
+
+
+async def delete_all_notes(session: AsyncSession, user_id: int) -> int:
+    """İstifadəçinin bütün qeydlərini sil, silinən sayını qaytar."""
+    notes = await all_notes(session, user_id)
+    for note in notes:
+        await session.delete(note)
+    await session.flush()
+    return len(notes)
+
+
 async def count_notes_since(session: AsyncSession, user_id: int, since: datetime) -> int:
     """`since`-dən bəri yaradılmış qeydlərin sayı (səhər brifinqi üçün)."""
     result = await session.execute(
