@@ -30,9 +30,16 @@ def init_providers() -> None:
         providers.register("embed", OpenAIEmbeddingProvider(settings.openai_api_key))
         providers.register("stt", WhisperSTTProvider(settings.openai_api_key))
 
+    # Tək tool-using agent — llm + embedder hər ikisi varsa qurulur.
+    if providers.has("llm") and providers.has("embed"):
+        from app.agent.agent import BrainAgent
+
+        providers.register("agent", BrainAgent(providers.get("llm")))
+
     log.info(
         "providers_initialized",
         llm=providers.has("llm"),
         embed=providers.has("embed"),
         stt=providers.has("stt"),
+        agent=providers.has("agent"),
     )
