@@ -27,6 +27,8 @@ və **növbəti addımı** saxlayır.
   `main`-ə push → `appleboy/ssh-action` server-ə SSH → `git pull --ff-only` +
   `docker compose up -d --build bot` + `docker image prune`. **Canlı test: run #2 Success ✅.**
   App açarları GitHub-a GETMİR (yalnız server `.env`); GitHub secrets = `SSH_HOST`/`SSH_USER`/`SSH_KEY`.
+  **Optimallaşma** (commit `b482f16`): Dockerfile-də asılılıqlar `app/`-dan ƏVVƏL quraşdırılır →
+  kod-only deploy ~15s (pip layer keşdə); workflow `paths-ignore: ['**.md', ...]` → docs-only push deploy etmir.
   İki açar: server→GitHub **deploy key** (`~/.ssh/id_ed25519`, repo Deploy keys, read-only, `git pull` üçün);
   Actions→server **`gh_actions`** (private → `SSH_KEY` secret, public → server authorized_keys).
 - **Gecə backup cron** server-də quruldu: `15 3 * * * cd /root/AI-Assistant && ./scripts/backup.sh ...`.
