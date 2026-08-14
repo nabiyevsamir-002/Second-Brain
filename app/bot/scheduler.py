@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import httpx
+from sqlalchemy import text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes
 
@@ -211,6 +213,34 @@ async def briefing_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         await session.commit()
 
 
+async def heartbeat(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Dead man's switch — DB-ni yoxla, sonra HEALTHCHECK_URL-a ping at.
+
+    Uğur → URL-a GET (monitor "sağam" görür). DB xətası → URL/fail (dərhal alert).
+    Bot/VPS tamam düşərsə ping ümumiyyətlə getmir → monitor grace-dən sonra alert edir.
+    URL boşdursa job işləmir (deaktiv).
+    """
+    url = settings.healthcheck_url
+    if not url:
+        return
+
+    db_ok = True
+    try:
+        async with SessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001
+        db_ok = False
+        log.error("heartbeat_db_fail", error=str(exc))
+
+    target = url if db_ok else url.rstrip("/") + "/fail"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.get(target)
+        log.info("heartbeat_ping", db_ok=db_ok)
+    except Exception as exc:  # noqa: BLE001 — ping uğursuzsa monitor onsuz da alert edəcək
+        log.warning("heartbeat_ping_fail", error=str(exc))
+
+
 def _secs_to_next_hour() -> int:
     """İndidən növbəti tam saata (:00) qədər saniyə (tick-i saat başına düzləmək üçün)."""
     now = now_local()
@@ -237,9 +267,17 @@ def setup_jobs(application: Application) -> None:
         first=_secs_to_next_hour(),
         name="briefing_tick",
     )
+    if settings.healthcheck_url:
+        jq.run_repeating(
+            heartbeat,
+            interval=max(1, settings.heartbeat_interval_min) * 60,
+            first=10,
+            name="heartbeat",
+        )
     log.info(
         "scheduler_ready",
         reminder_interval_sec=REMINDER_INTERVAL_SEC,
         briefing_default=f"{BRIEFING_DEFAULT_HOUR:02d}:00 {settings.timezone}",
         briefing_check="hourly",
+        heartbeat=("on" if settings.healthcheck_url else "off"),
     )

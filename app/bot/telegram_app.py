@@ -35,6 +35,7 @@ def _register_common(app: Application, user_filter=None) -> None:
     cmd("done", handlers.done_cmd)
     cmd("remind", handlers.remind_cmd)
     cmd("stats", handlers.stats_cmd)
+    cmd("health", handlers.health_cmd)
     cmd("export", handlers.export_cmd)
     cmd("delete", handlers.delete_cmd)
     cmd("edit", handlers.edit_cmd)

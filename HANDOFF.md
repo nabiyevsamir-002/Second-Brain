@@ -160,7 +160,11 @@ Layihə tam funksionaldır və canlıdır (yuxarıdakı "GitHub + Deploy" və "M
   - Həftəlik backup-verify cron:
     `30 3 * * 0 cd /root/AI-Assistant && ./scripts/verify_backup.sh >> ./backups/verify.log 2>&1`
   - (İstəyə bağlı) həftəlik digest üçün botda `/settings` → «Həftəlik icmalı aç».
-- **(İstəyə bağlı, hələ yox) monitoring** — server sağlamlığı / uptime alert (növbəti seçim).
+- **📡 Monitoring / uptime alert** ✅ — dead man's switch: `heartbeat` job hər 5 dəq DB yoxlayıb
+  `HEALTHCHECK_URL`-a ping (DB xətası→`/fail`); boşdursa söndürülü. `/health` əmri (DB/providerlər/uptime).
+  `scripts/watchdog.sh` (imzasız alternativ: konteyner düşsə Telegram DM). Detallar: [DEPLOYMENT.md](DEPLOYMENT.md) §7.1.
+  **⏳ MANUAL (server, Samir):** healthchecks.io-da pulsuz check yarat → ping URL-i `.env`-ə (`HEALTHCHECK_URL=`) →
+  `docker compose up -d bot` (loglarda `heartbeat=on`). VPS düşməsini də tutur. (Ya da host cron: `watchdog.sh`.)
 
 ## İş üsulu
 Hər fazada: qısa plan → kod (kiçik test edilə bilən addımlar) → açarlarla canlı test

@@ -152,6 +152,36 @@ gunzip -c backups/second_brain_YYYYMMDD_HHMMSS.sql.gz | \
 
 ---
 
+## 7.1 Monitoring / uptime alert
+
+Bot **polling**-dir (HTTP endpoint yoxdur) → xarici "ping" xidmətləri onu birbaşa yoxlaya
+bilmir. Düzgün pattern **dead man's switch**: bot müntəzəm "sağam" siqnalı göndərir; siqnal
+kəsilsə xarici monitor alert edir. İki variant (birini seç, ya ikisini):
+
+### A) Dead man's switch — healthchecks.io (tövsiyə, VPS düşməsini də tutur)
+1. [healthchecks.io](https://healthchecks.io)-da PULSUZ hesab aç → **New Check** yarat.
+2. Period ≈ 10 dəq, Grace ≈ 10 dəq. Bildiriş üçün **Integration** əlavə et (Email/Telegram/Slack).
+3. Check-in **ping URL**-ini kopyala → server `.env`:
+   ```dotenv
+   HEALTHCHECK_URL=https://hc-ping.com/<sənin-uuid>
+   HEARTBEAT_INTERVAL_MIN=5
+   ```
+4. `docker compose up -d bot`. Loglarda `scheduler_ready ... heartbeat=on` görünəcək.
+   Bot hər 5 dəq ping atır (DB xətası olsa `.../fail` → dərhal alert). Ping kəsilsə
+   (bot/DB/VPS düşüb) healthchecks.io sənə yazır.
+
+### B) Host watchdog — 3-cü tərəfsiz (VPS ayaqdadırsa konteyner düşməsini tutur)
+`scripts/watchdog.sh` konteyner statusunu yoxlayır, düşübsə **birbaşa Telegram**-a DM atır
+(token + chat id `.env`-dən). Host cron (Docker-dən kənarda):
+```cron
+*/5 * * * * cd /root/AI-Assistant && ./scripts/watchdog.sh >> ./backups/watchdog.log 2>&1
+```
+Spam-a qarşı 1 saat cooldown + bərpa bildirişi var. **Qeyd:** VPS-in özü düşsə bu skript də
+düşür — tam örtük üçün (A) variantı lazımdır.
+
+### C) Əl ilə yoxlama
+Botda `/health` → DB, providerlər, qeyd/istifadəçi sayı, uptime, monitoring statusu.
+
 ## 8. Çox-istifadəçi (multi-user) qeydi
 
 Data onsuz da `user_id` üzrə izolyasiyalıdır (hər qeyd/tapşırıq/xatırlatma istifadəçiyə

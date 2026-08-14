@@ -10,11 +10,16 @@ import io
 import os
 import re
 import tempfile
+import time
 from datetime import timedelta
 from decimal import Decimal
 
+from sqlalchemy import text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+
+# Proses başlama anı (uptime üçün) — modul importunda = app start.
+_STARTED = time.monotonic()
 
 from app.bot.ratelimit import limiter
 from app.config import settings
@@ -60,6 +65,7 @@ HELP = (
     "/done <id> — tapşırığı bağla\n"
     "/remind — gələn xatırlatmalar\n"
     "/stats — istifadə və xərc\n"
+    "/health — sistem sağlamlığı (DB, providerlər, uptime)\n"
     "/export — qeydləri fayl kimi yüklə\n"
     "/delete <id> — qeydi sil (/delete all = hamısı)\n"
     "/edit <id> <mətn> — qeydi yenilə (yenidən təmizlə+embed)\n"
@@ -90,6 +96,48 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"🆔 Sənin Telegram ID: {user.id}\n👤 Ad: {user.full_name}"
     )
+
+
+def _fmt_uptime(secs: float) -> str:
+    secs = int(secs)
+    d, rem = divmod(secs, 86400)
+    h, rem = divmod(rem, 3600)
+    m, _ = divmod(rem, 60)
+    parts = []
+    if d:
+        parts.append(f"{d}g")
+    if h:
+        parts.append(f"{h}s")
+    parts.append(f"{m}dəq")
+    return " ".join(parts)
+
+
+async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/health — DB, providerlər, sayğaclar, uptime, monitoring statusu (əl ilə yoxlama)."""
+    db_ok = True
+    n_notes = n_users = 0
+    try:
+        async with SessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+            n_notes = int((await session.execute(text("SELECT count(*) FROM notes"))).scalar() or 0)
+            n_users = int((await session.execute(text("SELECT count(*) FROM users"))).scalar() or 0)
+    except Exception as exc:  # noqa: BLE001
+        db_ok = False
+        log.error("health_db_fail", error=str(exc))
+
+    prov = ", ".join(
+        k for k in ("llm", "embed", "stt", "tts", "search", "agent") if providers.has(k)
+    ) or "yoxdur"
+    mon = "açıq 🟢" if settings.healthcheck_url else "söndürülü ⚪"
+    lines = [
+        "🩺 *Sağlamlıq*",
+        f"DB: {'✅ qoşulu' if db_ok else '❌ XƏTA'}",
+        f"Providerlər: {prov}",
+        f"Qeyd / İstifadəçi: {n_notes} / {n_users}",
+        f"Uptime: {_fmt_uptime(time.monotonic() - _STARTED)}",
+        f"Monitoring ping: {mon}",
+    ]
+    await update.message.reply_markdown("\n".join(lines))
 
 
 async def _rate_ok(update: Update) -> bool:

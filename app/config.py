@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     # --- Tavily web axtarış (Phase 4) ---
     tavily_api_key: str = ""
 
+    # --- Monitoring / uptime (Phase 6.1) ---
+    # Dead man's switch: bot müntəzəm bu URL-a "sağam" ping atır (məs. healthchecks.io).
+    # Ping kəsilsə (bot/DB/VPS düşüb) xarici monitor SƏNƏ alert göndərir. Boş = söndürülü.
+    healthcheck_url: str = ""
+    heartbeat_interval_min: int = 5
+
     @property
     def tz(self) -> ZoneInfo:
         """Konfiqurasiya olunmuş saat qurşağı (reminders/tasks/brifinq üçün)."""
