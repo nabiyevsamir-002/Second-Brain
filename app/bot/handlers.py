@@ -28,8 +28,8 @@ from app.repositories.notes import (
     delete_all_notes,
     delete_note,
     get_note,
+    hybrid_search_notes,
     list_notes,
-    search_notes_by_vector,
 )
 from app.repositories.reminders import list_pending
 from app.repositories.tasks import complete_task, list_open_tasks
@@ -413,8 +413,8 @@ async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     async with SessionLocal() as session:
         embedding = await providers.get("embed").embed_one(query)
-        hits = await search_notes_by_vector(
-            session, update.effective_user.id, embedding, k=5,
+        hits = await hybrid_search_notes(
+            session, update.effective_user.id, embedding, query, k=5,
             category=category, tag=tag,
         )
 

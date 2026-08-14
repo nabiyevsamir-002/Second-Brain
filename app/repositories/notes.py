@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Note, NoteSource
@@ -121,3 +121,84 @@ async def search_notes_by_vector(
     stmt = stmt.order_by(distance).limit(k)
     result = await session.execute(stmt)
     return [(row[0], float(row[1])) for row in result.all()]
+
+
+# --- Hybrid axtarış (vektor + açar söz) ----------------------------------
+# Qısa/dəqiq sorğularda (ad, nömrə, konkret söz) yalnız vektor bəzən zəif olur.
+# Açar söz ILIKE uyğunluğu vektor oxşarlığı ilə birləşdirilir → dəqiqlik↑.
+_KW_MIN_LEN = 3          # bu uzunluqdan qısa tokenlər açar söz sayılmır
+_KEYWORD_BONUS = 0.15    # açar söz uyğunluğu olan qeydə əlavə bal
+_KEYWORD_ONLY_BASE = 0.45  # yalnız açar söz uyğunluğu (vektorda yox) — baza bal
+
+
+def _keywords(query: str) -> list[str]:
+    return [t for t in (query or "").lower().split() if len(t) >= _KW_MIN_LEN][:6]
+
+
+async def keyword_search_notes(
+    session: AsyncSession,
+    user_id: int,
+    terms: list[str],
+    limit: int = 15,
+    *,
+    category: str | None = None,
+    tag: str | None = None,
+) -> list[Note]:
+    """cleaned_text/raw_text/summary sahələrində açar söz (ILIKE) uyğunluğu."""
+    if not terms:
+        return []
+    conds = []
+    for term in terms:
+        like = f"%{term}%"
+        conds.extend(
+            [Note.cleaned_text.ilike(like), Note.raw_text.ilike(like), Note.summary.ilike(like)]
+        )
+    stmt = select(Note).where(Note.user_id == user_id, or_(*conds))
+    if category:
+        stmt = stmt.where(func.lower(Note.category) == category.lower())
+    if tag:
+        stmt = stmt.where(Note.tags.any(tag.lower()))
+    stmt = stmt.order_by(Note.created_at.desc()).limit(limit)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def hybrid_search_notes(
+    session: AsyncSession,
+    user_id: int,
+    embedding: list[float],
+    query: str,
+    k: int = 5,
+    *,
+    category: str | None = None,
+    tag: str | None = None,
+) -> list[tuple[Note, float]]:
+    """Vektor + açar söz nəticələrini birləşdir, birləşik bala görə sırala.
+
+    Qaytarılan distance GÖSTƏRİŞ üçün vektor məsafəsidir (kiçik=oxşar); sıralama
+    isə birləşik bala (vektor oxşarlıq + açar söz bonusu) əsaslanır.
+    """
+    terms = _keywords(query)
+    vec = await search_notes_by_vector(
+        session, user_id, embedding, k=k * 3, category=category, tag=tag
+    )
+    kw = (
+        await keyword_search_notes(session, user_id, terms, limit=k * 3, category=category, tag=tag)
+        if terms
+        else []
+    )
+    kw_ids = {n.id for n in kw}
+
+    # id -> [note, display_distance, score]
+    scored: dict[int, list] = {}
+    for note, dist in vec:
+        scored[note.id] = [note, dist, max(0.0, 1.0 - dist)]
+    for note in kw:
+        if note.id not in scored:
+            scored[note.id] = [note, 1.0 - _KEYWORD_ONLY_BASE, _KEYWORD_ONLY_BASE]
+    for nid, entry in scored.items():
+        if nid in kw_ids:
+            entry[2] += _KEYWORD_BONUS
+
+    ranked = sorted(scored.values(), key=lambda e: e[2], reverse=True)[:k]
+    return [(e[0], e[1]) for e in ranked]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.repositories.notes import search_notes_by_vector
+from app.repositories.notes import hybrid_search_notes
 from app.tools.base import Tool, ToolContext
 
 
@@ -26,7 +26,7 @@ class SearchNotesTool(Tool):
 
     async def run(self, ctx: ToolContext, query: str = "", k: int = 5, **_: Any) -> str:
         embedding = await ctx.embedder.embed_one(query)
-        hits = await search_notes_by_vector(ctx.session, ctx.user_id, embedding, k=k or 5)
+        hits = await hybrid_search_notes(ctx.session, ctx.user_id, embedding, query, k=k or 5)
         if not hits:
             return "Heç bir uyğun qeyd tapılmadı."
 
