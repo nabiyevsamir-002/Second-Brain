@@ -50,7 +50,8 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 
 ## Əmrlər
 `/start` `/help` `/list` `/search` `/id` `/tasks` `/done` `/remind`
-`/stats` `/export` `/delete` `/settings` `/voice` (hazır — Azure `az-AZ` səsli cavab)
+`/stats` `/export` `/delete` `/edit` `/settings` `/voice` (hazır — Azure `az-AZ` səsli cavab)
+`/list iş`·`/list #tag`·`/search <söz> cat:iş #tag` (filtr) · `/settings`-də həftəlik digest toggle
 
 ## Təhlükəsizlik
 - Allowlist — yalnız Samir-in telegram_id (`ALLOWED_USER_IDS`).
@@ -65,7 +66,10 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 - **Phase 2 — RAG Brain** ✅ (embedding, `/search`, chat + citations, auto-kateqoriya, əlaqəli qeyd)
 - **Phase 3 — Capture+** ✅ (forward→save, PDF/DOCX indeks, Azure `az-AZ` TTS səsli cavab `/voice`)
 - **Phase 4 — Proactive** ✅ (reminders+tasks, `/tasks` `/done` `/remind`, səhər brifinqi, PTB JobQueue; backup **host-cron**; Tavily `web_search` ✅)
-- **Phase 5 — Polish** ✅ (cost tracking + `/stats`, `/export`, `/delete`, `/settings`; rate-limit + backup verify deferred)
+- **Phase 5 — Polish** ✅ (cost tracking + `/stats`, `/export`, `/delete`, `/settings`)
+- **Phase 6 — Optimize + Extend** ✅ (prompt caching, Haiku↔Sonnet escalation, rate-limit; təkrarlanan
+  xatırlatma+snooze, /list·/search filtr, /edit, hybrid axtarış, həftəlik digest, şəkil OCR (vision),
+  backup-verify, DEPLOYMENT.md) — migrationlar 0002/0003
 
 ## Metodologiya
 1. Hər fazadan əvvəl qısa plan təsdiqi.

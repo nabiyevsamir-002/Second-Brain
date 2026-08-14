@@ -17,6 +17,37 @@ və **növbəti addımı** saxlayır.
 | **Phase 3 (voice reply)** | 🔊 Azure `az-AZ` TTS səsli cavab: `AzureTTSProvider` (OGG/Opus, sync SDK→`asyncio.to_thread`), `/voice` əmri (aç/söndür + Babek/Banu seçimi + `test`), per-user setting (`voice_reply`/`voice_name` JSONB), `_run_agent`-ə inteqrasiya (mətn + səsli qeyd), `_clean_for_speech` (sitat/markdown/emoji təmizlə), TTS cost tracking (`tts_cost`, kind=`tts`) | `07d362a` |
 | **Web search (Tavily)** | 🌐 `web_search` agent tool + `TavilySearchProvider` (AsyncTavilyClient), factory-də şərti qeydiyyat (`TAVILY_API_KEY`), system prompt-da İNTERNET AXTARIŞ niyyəti (şəxsi=search_notes, internet=web_search), mənbə URL-li cavab, cost tracking (`search_cost`, kind=`search`) | `ea6b802` |
 
+## 🚀 Phase 6 — Optimizasiya + yeni feature-lər (2026-08-14, canlı deploy edildi)
+
+**Optimizasiya (keyfiyyət balansı qorunub):**
+- **Prompt caching** — system 2 blokdur: statik (keşlənir, `cache_control`) + dinamik cari vaxt;
+  son tool sxemasına `cache_control` → tools+statik system keşlənir (cache read ~0.1×).
+  `pricing.llm_cost`/`log_llm_usage` cache write(1.25×)/read(0.1×) tokenlərini sayır (/stats dəqiq).
+- **Selective escalation** — `is_complex_query()`: sadə mesaj Haiku, analitik/uzun/çox-suallı → `CLAUDE_MODEL_SMART`
+  (default `claude-sonnet-5`). `ESCALATION_ENABLED` env-toggle. Sadə hallar ucuz qalır, çətinlərdə keyfiyyət↑.
+  (Thinking kodda aktiv deyildi — azaldılası bir şey yoxdur; escalation keyfiyyət leveridir.)
+- **Rate-limit** — `app/bot/ratelimit.py` sliding-window (60s+60dəq) per-user; bahalı handler-lərdə
+  (text/voice/document/photo). `RATE_LIMIT_PER_MIN=20`, `RATE_LIMIT_PER_HOUR=240` (səxavətli, 0=limitsiz).
+
+**Yeni feature-lər:**
+- **Təkrarlanan xatırlatma + snooze** — `reminders.recur` (migration **0002**; daily/weekly). Scheduler
+  çatdırdıqdan sonra növbəti vaxta sürüşdürür. Hər xatırlatmada inline düymələr: 😴10dəq/😴1saat (yeni birdəfəlik
+  yaradır) + ✅Bağla (təkrarlananı dayandırır). `/remind`-də 🔁.
+- **/list & /search filtri** — `/list iş`, `/list #tag`, `/search <söz> cat:iş #tag` (repo-da category/tag filtri).
+- **/edit <id> <mətn>** — qeydi yenidən təmizlə+re-embed (`recapture_note`).
+- **Hybrid axtarış** — `hybrid_search_notes` (vektor + açar söz ILIKE, birləşik bal). `/search` + agent `search_notes` tool.
+- **Həftəlik digest** — opt-in (`digest_enabled`, default söndürülü), B.e. `briefing_hour`-da; /settings-də toggle.
+  Son 7 gün: qeyd sayı, əsas kateqoriyalar, açıq tapşırıq, gələn xatırlatma.
+- **Şəkil qeydlər (OCR)** — Telegram foto → Claude **vision** (tək çağırış: OCR+summary+category+tags JSON) →
+  qeyd (yeni `source=photo`, migration **0003** enum ADD VALUE, autocommit_block). Yeni native asılılıq YOX.
+- **DEPLOYMENT.md** — şirkət təhvili üçün addım-addım (compose+.env, açarlar, allowlist, backup/verify cron, troubleshooting).
+
+**Migrationlar:** `0002_reminder_recur`, `0003_note_source_photo`. Deploy-da entrypoint `alembic upgrade head`
+avtomatik tətbiq edir. **Test:** fresh-DB zənciri (0001→0002→0003) + mövcud-DB (0001→head) təmiz keçdi; hər feature
+lokal smoke test keçdi; real image tam import olundu.
+
+**⏳ MANUAL (server, Samir):** həftəlik backup-verify cron (aşağı bax). Digest istəyirsənsə `/settings`-də aç.
+
 ## ☁️ GitHub + Deploy (2026-08-13)
 - Repo: **https://github.com/nebiyevsamir002-star/AI-Assistant** — **PRIVATE**.
 - Branch **`main`** (tracking qurulub → sadəcə `git push`). HTTPS auth osxkeychain token.
@@ -120,16 +151,16 @@ docker compose run --rm -e RUN_MIGRATIONS=0 bot python -c "..."
 ## ✅ HAMISI HAZIR: bütün AI feature-lər + private repo + VPS production + CI/CD + Haiku beyni.
 Layihə tam funksionaldır və canlıdır (yuxarıdakı "GitHub + Deploy" və "Model dəyişikliyi" bölmələrinə bax).
 
-## Qalıqlar / növbəti (hamısı AŞAĞI prioritet — Samir seçimi, əvvəl qısa plan təsdiqi):
-- **🌙 Backup-verify skripti** ✅ — `scripts/verify_backup.sh`: ən son backup-ı AYRI müvəqqəti
-  Postgres konteynerində bərpa edir (canlı DB-yə toxunmur), pgvector + 7 cədvəl + `notes` oxunuşu +
-  `embedding vector(1536)` yoxlanır, exit 0/1. Lokal 3 ssenari test keçdi (boş DB, data=1, korlanmış fayl).
-  **⏳ MANUAL (server):** həftəlik verify cron əlavə et:
-  `30 3 * * 0 cd /root/AI-Assistant && ./scripts/verify_backup.sh >> ./backups/verify.log 2>&1`
-- **⏱️ Rate-limit** (tək istifadəçi üçün aşağı dəyər — runaway API xərcinə qarşı sadə throttle).
-- **🏢 Şirkətə təhvil** — layihə şirkət üçündür, onlar öz serverlərində host edəcək: eyni `docker compose`
-  + `.env`. Multi-user miqyasda "hibrid/lokal-model beyni" variantı danışıldı (indi Haiku API optimaldır).
-- **(İstəyə bağlı monitoring)** — server sağlamlığı / uptime alert (hələ yoxdur).
+## Qalıqlar / növbəti
+- **🌙 Backup-verify skripti** ✅ — `scripts/verify_backup.sh` (yuxarı bax).
+- **⏱️ Rate-limit** ✅ — Phase 6-da tamamlandı (`app/bot/ratelimit.py`).
+- **🏢 Şirkətə təhvil** ✅ — `DEPLOYMENT.md` yazıldı (addım-addım guide).
+- **📊 Həftəlik digest / 🖼 şəkil OCR / 🔁 təkrarlanan xatırlatma / /edit / hybrid axtarış** ✅ — Phase 6.
+- **⏳ MANUAL (server, Samir):**
+  - Həftəlik backup-verify cron:
+    `30 3 * * 0 cd /root/AI-Assistant && ./scripts/verify_backup.sh >> ./backups/verify.log 2>&1`
+  - (İstəyə bağlı) həftəlik digest üçün botda `/settings` → «Həftəlik icmalı aç».
+- **(İstəyə bağlı, hələ yox) monitoring** — server sağlamlığı / uptime alert (növbəti seçim).
 
 ## İş üsulu
 Hər fazada: qısa plan → kod (kiçik test edilə bilən addımlar) → açarlarla canlı test
