@@ -34,7 +34,9 @@ class Settings(BaseSettings):
 
     # --- LLM (Phase 1) ---
     anthropic_api_key: str = ""
-    claude_model_main: str = "claude-sonnet-5"
+    # Agent beyni — HƏR mesajda işləyir (əsas xərc). Xərc balansı üçün default Haiku 4.5
+    # (~3× ucuz, AZ güclü). Daha yüksək keyfiyyət lazım olsa .env-də claude-sonnet-5 et.
+    claude_model_main: str = "claude-haiku-4-5"
     claude_model_fast: str = "claude-haiku-4-5"
 
     # --- OpenAI: Whisper STT + embeddings (Phase 1-2) ---

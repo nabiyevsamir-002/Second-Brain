@@ -39,8 +39,9 @@ və **növbəti addımı** saxlayır.
 - **`CLAUDE_MODEL_MAIN=claude-haiku-4-5`** edildi (əvvəl `claude-sonnet-5`) — `.env` dəyişikliyi, kod yox.
 - Səbəb: agent beyni HƏR mesajda işləyir (əsas xərc); Haiku ~**3× ucuz** (`$1/$5` vs Sonnet `$3/$15`),
   Azərbaycanca güclü qalır (açıq modellərdən yaxşı). Qeyd təmizləmə onsuz da Haiku-da idi.
-- **⏳ Samir Haiku keyfiyyətini canlı test edir.** Çətin RAG suallarında düşərsə → seçici Sonnet
-  eskalasiyası (sadə=Haiku, çətin=Sonnet), ya da `.env`-də bir dəyişikliklə Sonnet-ə qaytar.
+- **✅ Samir Haiku keyfiyyətini canlı təsdiqlədi — SAXLANILDI.** Default hər yerdə Haiku edildi
+  (`config.py`, `.env.example`, hər iki `.env`). Çətin RAG suallarında gələcəkdə lazım olsa → seçici
+  Sonnet eskalasiyası (sadə=Haiku, çətin=Sonnet), ya da `.env`-də bir dəyişikliklə Sonnet-ə qaytar.
 
 **Canlı vəziyyət (server):** `providers_initialized agent=True embed=True llm=True search=True stt=True tts=True`,
 `database_ready pgvector=True`, `scheduler_ready`, `Application started`. Bütün AI feature-lər (RAG, reminders,

@@ -29,7 +29,7 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
 
 ## Tex Stack
 - Python 3.11+ (konteynerdə 3.12), python-telegram-bot v21 (async)
-- Claude API: `claude-sonnet-5` (əsas), `claude-haiku-4-5` (sadə tapşırıqlar)
+- Claude API: `claude-haiku-4-5` (agent beyni — xərc balansı, canlı təsdiqlənib); `claude-sonnet-5` yüksək-keyfiyyət seçimi (env ilə)
 - STT: OpenAI Whisper (`whisper-1`, language=`az`); Azure `az-AZ` STT (fallback — hələ yox)
 - TTS: Azure Speech `az-AZ` (BabekNeural/BanuNeural) — ✅ (OGG/Opus, `/voice`)
 - Embedding: OpenAI `text-embedding-3-small` (1536 ölçü) — **LOCKED, dəyişmə**
