@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     # (~3× ucuz, AZ güclü). Daha yüksək keyfiyyət lazım olsa .env-də claude-sonnet-5 et.
     claude_model_main: str = "claude-haiku-4-5"
     claude_model_fast: str = "claude-haiku-4-5"
+    # Selective escalation (Phase 6): sadə mesaj → Haiku, ÇƏTİN/analitik sual → bu model.
+    # Yalnız mürəkkəb suallarda işə düşür (keyfiyyət↑), sadə hallar ucuz Haiku qalır.
+    claude_model_smart: str = "claude-sonnet-5"
+    escalation_enabled: bool = True
+
+    # --- Rate-limit (Phase 6) — runaway API xərcinə qarşı sadə throttle ---
+    # Tək istifadəçi üçün səxavətli limitlər (normal istifadə heç vaxt dəyməz).
+    rate_limit_per_min: int = 20
+    rate_limit_per_hour: int = 240
 
     # --- OpenAI: Whisper STT + embeddings (Phase 1-2) ---
     openai_api_key: str = ""

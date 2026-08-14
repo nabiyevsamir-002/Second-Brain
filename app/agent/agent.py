@@ -20,10 +20,12 @@ log = get_logger("agent")
 
 MAX_TOOL_ROUNDS = 5
 
-AGENT_SYSTEM_TMPL = (
-    "Sən Samir-in şəxsi 'Second Brain' assistentisən. HƏMIŞƏ Azərbaycanca cavab ver.\n"
-    "CARİ VAXT (Asia/Baku): {now}. Nisbi vaxtları ('sabah', '2 saatdan sonra', "
-    "'cümə axşamı 9-da') HƏMİŞƏ bu vaxta əsasən hesabla.\n\n"
+# --- System prompt: STATİK hissə (prompt caching üçün) --------------------
+# Cari vaxt AYRICA dinamik blokda gedir (aşağı bax) — beləliklə statik hissə +
+# tool sxemaları dəyişmir və Anthropic prompt caching ilə keşlənir (cache read
+# ~0.1× qiymət). Keyfiyyət eyni qalır; yalnız təkrar göndərilən sabit prefiks ucuzlaşır.
+AGENT_SYSTEM_STATIC = (
+    "Sən Samir-in şəxsi 'Second Brain' assistentisən. HƏMIŞƏ Azərbaycanca cavab ver.\n\n"
     "Gələn mesajın niyyətini anla və uyğun aləti çağır:\n\n"
     "• XATIRLATMA — istifadəçi müəyyən vaxtda xəbərdar edilmək istəyir ('...-ı "
     "xatırlat', 'yadıma sal') → `create_reminder` (text + remind_at, local ISO).\n\n"
@@ -50,13 +52,53 @@ WEB_SEARCH_INTENT = (
     "Uydurma etmə. (Şəxsi qeydlər üçün search_notes, internet üçün web_search.)\n\n"
 )
 
+# Escalation (task #2): sadə mesaj Haiku-da qalır, YALNIZ analitik/mürəkkəb sual
+# smart modelə (Sonnet) qalxır. Keyfiyyəti çətin suallarda artırır, xərci sadə
+# hallarda aşağı saxlayır. Aşağıdakı işarələr → mürəkkəb sayılır.
+_COMPLEX_HINTS = (
+    "müqayisə", "təhlil", "analiz", "izah et", "niyə", "səbəb", "strategiya",
+    "plan qur", "addım-addım", "hansı daha", "üstünlük", "fərq", "qiymətləndir",
+    "nəticə çıxar", "ümumiləşdir", "tövsiyə et", "debug", "hesabla", "düstur",
+    "compare", "analyze", "explain",
+)
+
+
+def is_complex_query(user_text: str) -> bool:
+    """Mesaj analitik/mürəkkəb görünürsə True (escalation üçün) — saf funksiya."""
+    t = (user_text or "").lower()
+    return (
+        len(t) > 220
+        or t.count("?") >= 2
+        or any(h in t for h in _COMPLEX_HINTS)
+    )
+
+
+def _system_blocks(has_web_search: bool, now: str) -> list[dict[str, Any]]:
+    """System-i 2 blok kimi qur: [statik (keşlənir)] + [cari vaxt (dinamik)].
+
+    cache_control statik blokda → tools + statik system keşlənir. Cari vaxt bloku
+    breakpoint-dən SONRA gəlir, ona görə keşi pozmur (hər dəqiqə dəyişsə də).
+    """
+    static = AGENT_SYSTEM_STATIC.format(
+        web_search_intent=WEB_SEARCH_INTENT if has_web_search else ""
+    )
+    return [
+        {"type": "text", "text": static, "cache_control": {"type": "ephemeral"}},
+        {
+            "type": "text",
+            "text": (
+                f"CARİ VAXT (Asia/Baku): {now}. Nisbi vaxtları ('sabah', "
+                "'2 saatdan sonra', 'cümə axşamı 9-da') HƏMİŞƏ bu vaxta əsasən hesabla."
+            ),
+        },
+    ]
+
 
 def build_system(has_web_search: bool = False) -> str:
-    """System prompt-u cari local vaxtla qur (nisbi vaxt hesablaması üçün)."""
-    return AGENT_SYSTEM_TMPL.format(
-        now=now_local_prompt(),
-        web_search_intent=WEB_SEARCH_INTENT if has_web_search else "",
-    )
+    """Düz mətn system prompt (geriyə uyğunluq / test üçün)."""
+    return AGENT_SYSTEM_STATIC.format(
+        web_search_intent=WEB_SEARCH_INTENT if has_web_search else ""
+    ) + f"\n\nCARİ VAXT (Asia/Baku): {now_local_prompt()}."
 
 
 class BrainAgent:
@@ -77,6 +119,27 @@ class BrainAgent:
             from app.tools.web_search import WebSearchTool
 
             self.tools.register(WebSearchTool())
+
+        from app.config import settings as _settings
+
+        self.escalation_enabled = _settings.escalation_enabled
+        # Tool sxemalarını bir dəfə keşlə + sonuncuya cache_control qoy (prompt
+        # caching: tools + statik system keşlənən sabit prefiksdir).
+        self._tool_schemas = self.tools.schemas()
+        if self._tool_schemas:
+            self._tool_schemas[-1] = {
+                **self._tool_schemas[-1],
+                "cache_control": {"type": "ephemeral"},
+            }
+
+    def _pick_model(self, user_text: str) -> str:
+        """Sadə mesaj → Haiku (ucuz); analitik/mürəkkəb sual → smart (Sonnet).
+
+        Keyfiyyət balansı: escalation yalnız həqiqətən çətin suallarda işə düşür.
+        """
+        if not self.escalation_enabled:
+            return self.llm.model_fast
+        return self.llm.model_smart if is_complex_query(user_text) else self.llm.model_fast
 
     async def handle(
         self,
@@ -102,17 +165,20 @@ class BrainAgent:
 
         messages: list[dict[str, Any]] = hist + [{"role": "user", "content": user_text}]
 
-        system = build_system(has_web_search=self.has_web_search)
+        # System = keşlənən statik blok + dinamik cari vaxt bloku (prompt caching).
+        system = _system_blocks(self.has_web_search, now_local_prompt())
+        # Model seçimi bütün tur üçün bir dəfə (sadə=Haiku, mürəkkəb=Sonnet).
+        model = self._pick_model(user_text)
         for _ in range(MAX_TOOL_ROUNDS):
             resp = await self.llm.complete(
                 system=system,
                 messages=messages,
-                tools=self.tools.schemas(),
-                model=self.llm.model_main,
+                tools=self._tool_schemas,
+                model=model,
                 max_tokens=2048,
             )
             try:
-                await log_llm_usage(session, user_id, self.llm.model_main, resp.usage)
+                await log_llm_usage(session, user_id, model, resp.usage)
             except Exception:  # noqa: BLE001 — usage logu kritik deyil
                 pass
 

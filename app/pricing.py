@@ -24,10 +24,26 @@ SEARCH_PRICE_PER_CALL = 0.008  # Tavily basic search — hər çağırış üç�
 _M = Decimal(1_000_000)
 
 
-def llm_cost(model: str, input_tokens: int, output_tokens: int) -> Decimal:
-    """LLM çağırışının təxmini xərci (input/output ayrı qiymətlənir)."""
+def llm_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_write_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> Decimal:
+    """LLM çağırışının təxmini xərci.
+
+    Prompt caching (Anthropic): cache YAZMA ~1.25× input qiyməti, cache OXUMA
+    ~0.1× input qiyməti. Keşlənən sabit prefiks təkrar çağırışlarda çox ucuzdur.
+    """
     inp, out = MODEL_PRICES.get(model, (0.0, 0.0))
-    cost = (Decimal(input_tokens) * Decimal(str(inp)) + Decimal(output_tokens) * Decimal(str(out))) / _M
+    inp_d = Decimal(str(inp))
+    cost = (
+        Decimal(input_tokens) * inp_d
+        + Decimal(output_tokens) * Decimal(str(out))
+        + Decimal(cache_write_tokens) * inp_d * Decimal("1.25")
+        + Decimal(cache_read_tokens) * inp_d * Decimal("0.1")
+    ) / _M
     return cost
 
 

@@ -38,11 +38,21 @@ async def log_usage(
 async def log_llm_usage(
     session: AsyncSession, user_id: int | None, model: str, usage: Any
 ) -> None:
-    """Claude cavabının `usage` obyektindən token+cost loglar (kind='llm')."""
+    """Claude cavabının `usage` obyektindən token+cost loglar (kind='llm').
+
+    Prompt caching açıqdırsa cache yazma/oxuma tokenləri də nəzərə alınır ki,
+    /stats-dakı xərc dəqiq qalsın.
+    """
     inp = int(getattr(usage, "input_tokens", 0) or 0)
     out = int(getattr(usage, "output_tokens", 0) or 0)
+    cw = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    cr = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
     await log_usage(
-        session, user_id, "llm", tokens=inp + out, cost=llm_cost(model, inp, out)
+        session,
+        user_id,
+        "llm",
+        tokens=inp + out + cw + cr,
+        cost=llm_cost(model, inp, out, cw, cr),
     )
 
 

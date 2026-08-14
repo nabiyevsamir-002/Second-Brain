@@ -24,6 +24,7 @@ def init_providers() -> None:
                 settings.anthropic_api_key,
                 settings.claude_model_main,
                 settings.claude_model_fast,
+                settings.claude_model_smart,
             ),
         )
     if settings.openai_api_key:

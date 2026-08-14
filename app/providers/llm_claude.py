@@ -14,10 +14,18 @@ from app.providers.base import LLMProvider
 
 
 class ClaudeLLMProvider(LLMProvider):
-    def __init__(self, api_key: str, model_main: str, model_fast: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model_main: str,
+        model_fast: str,
+        model_smart: str | None = None,
+    ) -> None:
         self.client = AsyncAnthropic(api_key=api_key)
         self.model_main = model_main
         self.model_fast = model_fast
+        # Escalation hədəfi (çətin suallar). Verilməyibsə main-ə düşür.
+        self.model_smart = model_smart or model_main
 
     async def complete(
         self,
