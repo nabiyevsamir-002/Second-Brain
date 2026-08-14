@@ -15,6 +15,7 @@ from decimal import Decimal
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
+from app.bot.ratelimit import limiter
 from app.config import settings
 from app.db import SessionLocal
 from app.logging_conf import get_logger
@@ -86,6 +87,17 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"🆔 Sənin Telegram ID: {user.id}\n👤 Ad: {user.full_name}"
     )
+
+
+async def _rate_ok(update: Update) -> bool:
+    """Bahalı əməliyyatlar üçün rate-limit yoxlaması. Aşılıbsa istifadəçiyə bildir."""
+    allowed, retry = limiter.check(update.effective_user.id)
+    if not allowed:
+        await update.message.reply_text(
+            f"⏳ Bir az yavaş — çox sürətli göndərirsən. Təxminən {retry} saniyə sonra "
+            "yenidən cəhd et."
+        )
+    return allowed
 
 
 # --- Səsli cavab (Azure az-AZ TTS) ---------------------------------------
@@ -235,6 +247,8 @@ async def _ingest_url_and_reply(update: Update, url: str) -> None:
 
 
 async def note_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _rate_ok(update):
+        return
     msg = update.message
     url = _first_url(msg)
     if url:
@@ -246,6 +260,8 @@ async def note_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def document_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _rate_ok(update):
+        return
     doc = update.message.document
     filename = doc.file_name or "sənəd"
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
@@ -289,6 +305,8 @@ async def document_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _rate_ok(update):
+        return
     if not providers.has("stt"):
         await update.message.reply_text("🎙 Səs tanıma deaktivdir (OPENAI_API_KEY yoxdur).")
         return
