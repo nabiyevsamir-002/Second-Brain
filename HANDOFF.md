@@ -121,7 +121,11 @@ docker compose run --rm -e RUN_MIGRATIONS=0 bot python -c "..."
 Layihə tam funksionaldır və canlıdır (yuxarıdakı "GitHub + Deploy" və "Model dəyişikliyi" bölmələrinə bax).
 
 ## Qalıqlar / növbəti (hamısı AŞAĞI prioritet — Samir seçimi, əvvəl qısa plan təsdiqi):
-- **🌙 Backup-verify skripti** — gecə backup (cron 03:15 quruldu) bərpa oluna bilirmi yoxlayan skript.
+- **🌙 Backup-verify skripti** ✅ — `scripts/verify_backup.sh`: ən son backup-ı AYRI müvəqqəti
+  Postgres konteynerində bərpa edir (canlı DB-yə toxunmur), pgvector + 7 cədvəl + `notes` oxunuşu +
+  `embedding vector(1536)` yoxlanır, exit 0/1. Lokal 3 ssenari test keçdi (boş DB, data=1, korlanmış fayl).
+  **⏳ MANUAL (server):** həftəlik verify cron əlavə et:
+  `30 3 * * 0 cd /root/AI-Assistant && ./scripts/verify_backup.sh >> ./backups/verify.log 2>&1`
 - **⏱️ Rate-limit** (tək istifadəçi üçün aşağı dəyər — runaway API xərcinə qarşı sadə throttle).
 - **🏢 Şirkətə təhvil** — layihə şirkət üçündür, onlar öz serverlərində host edəcək: eyni `docker compose`
   + `.env`. Multi-user miqyasda "hibrid/lokal-model beyni" variantı danışıldı (indi Haiku API optimaldır).
