@@ -15,12 +15,16 @@ RUN apt-get update \
         libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# pyproject + app source, sonra quraşdır.
-COPY pyproject.toml alembic.ini ./
-COPY app ./app
+# 1) Yalnız asılılıqları quraşdır — bu layer YALNIZ pyproject.toml dəyişəndə yenilənir (keş).
+#    [project.dependencies] app koduna bağlı deyil, ona görə app/ hələ kopyalanmır.
+#    Beləliklə kod dəyişikliyi ağır asılılıq quraşdırmasını yenidən işə salmır (sürətli deploy).
+COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install .
 
-# Migration-lar + entrypoint (app-dan sonra, ki pip layer keşdə qalsın).
+# 2) Tətbiq kodu + config — burada dəyişiklik yuxarıdakı asılılıq layer-ini POZMUR.
+#    Tətbiq /app-dan mənbə kimi işləyir (`python -m app.main`), pip paketi (boş) shadow etmir.
+COPY alembic.ini ./
+COPY app ./app
 COPY migrations ./migrations
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
 RUN chmod +x /app/docker/entrypoint.sh

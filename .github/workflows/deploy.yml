@@ -6,6 +6,10 @@ name: Deploy to VPS
 on:
   push:
     branches: [main]
+    paths-ignore: # yalnız-sənəd (docs) dəyişiklikləri botu boş yerə yenidən qurmasın
+      - "**.md"
+      - ".gitignore"
+      - "LICENSE"
   workflow_dispatch: {} # Actions → Deploy to VPS → Run workflow (əl ilə)
 
 concurrency:
