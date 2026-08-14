@@ -1,4 +1,4 @@
-# HANDOFF — harada qaldıq (2026-08-13)
+# HANDOFF — harada qaldıq (son yeniləmə 2026-08-14)
 
 Layihə spesifikasiyası: **[CLAUDE.md](CLAUDE.md)**. Bu fayl **hazırkı canlı vəziyyəti**
 və **növbəti addımı** saxlayır.
@@ -117,14 +117,15 @@ docker compose run --rm -e RUN_MIGRATIONS=0 bot python -c "..."
 - `/voice` (toggle), `/voice babek|banu` (səs seç+aç), `/voice test` (nümunə), `/voice off`.
 - Smoke test: `scripts/tts_smoke.py` KEÇDİ (hər iki səs, OGG magic təsdiq).
 
-## ✅ Web search tamamlandı (Tavily). Bütün planlaşdırılmış AI feature-lər hazırdır.
+## ✅ HAMISI HAZIR: bütün AI feature-lər + private repo + VPS production + CI/CD + Haiku beyni.
+Layihə tam funksionaldır və canlıdır (yuxarıdakı "GitHub + Deploy" və "Model dəyişikliyi" bölmələrinə bax).
 
-## Qalıqlar / növbəti (Samir seçimi):
-- **🚀 VPS production deploy** — hazırda bot Mac-də `docker compose` ilə işləyir; DigitalOcean
-  VPS-ə köçürmək (Docker + compose + `.env`, systemd/`restart: unless-stopped`).
-- **🌙 Gecə backup → HOST CRON** (VPS-də manual sətir, aşağı bax) + **backup verify** skripti.
-- **⏱️ Rate-limit** (tək istifadəçi üçün aşağı prioritet — runaway API xərcinə qarşı sadə throttle).
-Əvvəl qısa plan təsdiqi (metodologiya).
+## Qalıqlar / növbəti (hamısı AŞAĞI prioritet — Samir seçimi, əvvəl qısa plan təsdiqi):
+- **🌙 Backup-verify skripti** — gecə backup (cron 03:15 quruldu) bərpa oluna bilirmi yoxlayan skript.
+- **⏱️ Rate-limit** (tək istifadəçi üçün aşağı dəyər — runaway API xərcinə qarşı sadə throttle).
+- **🏢 Şirkətə təhvil** — layihə şirkət üçündür, onlar öz serverlərində host edəcək: eyni `docker compose`
+  + `.env`. Multi-user miqyasda "hibrid/lokal-model beyni" variantı danışıldı (indi Haiku API optimaldır).
+- **(İstəyə bağlı monitoring)** — server sağlamlığı / uptime alert (hələ yoxdur).
 
 ## İş üsulu
 Hər fazada: qısa plan → kod (kiçik test edilə bilən addımlar) → açarlarla canlı test
