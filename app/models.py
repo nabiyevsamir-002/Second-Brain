@@ -131,6 +131,8 @@ class Reminder(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     sent: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Təkrarlanma: NULL = birdəfəlik, 'daily' = hər gün, 'weekly' = hər həftə.
+    recur: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = _created_at()
 
 

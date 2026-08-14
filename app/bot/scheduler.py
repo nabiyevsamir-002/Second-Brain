@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes
 
 from app.config import settings
@@ -18,7 +19,11 @@ from app.db import SessionLocal
 from app.logging_conf import get_logger
 from app.models import TaskStatus
 from app.repositories.notes import count_notes_since
-from app.repositories.reminders import due_reminders, mark_sent, reminders_between
+from app.repositories.reminders import (
+    due_reminders,
+    reminders_between,
+    reschedule_or_mark_sent,
+)
 from app.repositories.tasks import list_open_tasks
 from app.repositories.users import get_user, update_settings
 from app.timeutils import fmt_local, now_local, now_utc
@@ -29,18 +34,38 @@ REMINDER_INTERVAL_SEC = 60
 BRIEFING_DEFAULT_HOUR = 8  # local (Asia/Baku) — istifadəçi /settings ilə dəyişə bilər
 
 
+def _reminder_keyboard(reminder_id: int) -> InlineKeyboardMarkup:
+    """Snooze (təxirə sal) + bağla düymələri."""
+    return InlineKeyboardMarkup(
+        [[
+            InlineKeyboardButton("😴 10 dəq", callback_data=f"rem:snooze:{reminder_id}:10"),
+            InlineKeyboardButton("😴 1 saat", callback_data=f"rem:snooze:{reminder_id}:60"),
+            InlineKeyboardButton("✅ Bağla", callback_data=f"rem:done:{reminder_id}"),
+        ]]
+    )
+
+
 async def deliver_due_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Vaxtı çatmış, göndərilməmiş xatırlatmaları Telegram-a çatdırır."""
+    """Vaxtı çatmış, göndərilməmiş xatırlatmaları Telegram-a çatdırır.
+
+    Təkrarlanan (recur) xatırlatma çatdırıldıqdan sonra növbəti vaxta sürüşür.
+    Hər mesajda snooze/bağla düymələri olur.
+    """
     now = now_utc()
     async with SessionLocal() as session:
         due = await due_reminders(session, now)
         for r in due:
             try:
+                suffix = " 🔁" if r.recur else ""
                 await context.bot.send_message(
-                    chat_id=r.user_id, text=f"⏰ Xatırlatma: {r.text}"
+                    chat_id=r.user_id,
+                    text=f"⏰ Xatırlatma: {r.text}{suffix}",
+                    reply_markup=_reminder_keyboard(r.id),
                 )
-                await mark_sent(session, r.id)
-                log.info("reminder_delivered", reminder_id=r.id, user_id=r.user_id)
+                await reschedule_or_mark_sent(session, r, now)
+                log.info(
+                    "reminder_delivered", reminder_id=r.id, user_id=r.user_id, recur=r.recur
+                )
             except Exception as exc:  # noqa: BLE001 — göndərmə uğursuzdursa növbəti turda təkrar
                 log.warning(
                     "reminder_delivery_failed", reminder_id=r.id, error=str(exc)

@@ -10,6 +10,7 @@ import io
 import os
 import re
 import tempfile
+from datetime import timedelta
 from decimal import Decimal
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -19,7 +20,7 @@ from app.bot.ratelimit import limiter
 from app.config import settings
 from app.db import SessionLocal
 from app.logging_conf import get_logger
-from app.models import NoteSource
+from app.models import NoteSource, Reminder
 from app.pricing import stt_cost, tts_cost
 from app.providers.registry import providers
 from app.repositories.messages import add_message, count_messages, get_recent_messages
@@ -31,7 +32,7 @@ from app.repositories.notes import (
     hybrid_search_notes,
     list_notes,
 )
-from app.repositories.reminders import list_pending
+from app.repositories.reminders import create_reminder, list_pending
 from app.repositories.tasks import complete_task, list_open_tasks
 from app.repositories.usage import log_usage, usage_totals
 from app.repositories.users import get_or_create_user, update_settings
@@ -485,7 +486,8 @@ async def remind_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     lines = ["⏰ *Gələn xatırlatmalar:*\n"]
     for r in pending:
-        lines.append(f"#{r.id} · {fmt_local(r.remind_at)} — {r.text}")
+        rep = " 🔁" if r.recur else ""
+        lines.append(f"#{r.id} · {fmt_local(r.remind_at)} — {r.text}{rep}")
     await update.message.reply_markdown("\n".join(lines))
 
 
@@ -760,6 +762,34 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data == "del:cancel":
         await q.edit_message_text("İmtina edildi.")
+        return
+
+    if data.startswith("rem:"):
+        parts = data.split(":")
+        action = parts[1]
+        rid = int(parts[2])
+        async with SessionLocal() as session:
+            reminder = await session.get(Reminder, rid)
+            if reminder is None or reminder.user_id != uid:
+                await q.edit_message_text("🤷 Xatırlatma tapılmadı.")
+                return
+            text = reminder.text
+            if action == "snooze":
+                minutes = int(parts[3])
+                when = now_utc() + timedelta(minutes=minutes)
+                await create_reminder(session, uid, text, when)
+                await session.commit()
+                await q.edit_message_text(
+                    f"😴 {minutes} dəq sonra yenidən xatırladacağam: «{text}»"
+                )
+            elif action == "done":
+                if reminder.recur:  # təkrarlanmanı dayandır
+                    reminder.recur = None
+                    reminder.sent = True
+                    await session.commit()
+                    await q.edit_message_text(f"✅ Təkrarlanma dayandırıldı: «{text}»")
+                else:
+                    await q.edit_message_text(f"✅ Bağlandı: «{text}»")
         return
 
     if data.startswith("del:one:"):

@@ -14,7 +14,8 @@ class CreateReminderTool(Tool):
     description = (
         "İstifadəçi müəyyən vaxtda xatırladılmaq istəyəndə çağır (məs: 'sabah 9-da "
         "həkimə zəng etməyi xatırlat', '2 saatdan sonra...'). Vaxtı system prompt-dakı "
-        "CARİ VAXT-a əsasən hesabla. remind_at yalnız gələcək vaxt olmalıdır."
+        "CARİ VAXT-a əsasən hesabla. remind_at yalnız gələcək vaxt olmalıdır. "
+        "İstifadəçi TƏKRARLANMA istəyirsə ('hər gün', 'hər həftə') recur ver."
     )
     input_schema: dict[str, Any] = {
         "type": "object",
@@ -27,7 +28,16 @@ class CreateReminderTool(Tool):
                 "type": "string",
                 "description": (
                     "Local (Asia/Baku) vaxt, ISO formatı: YYYY-MM-DDTHH:MM "
-                    "(məs: 2026-08-14T09:00). Saat qurşağı offset-i YAZMA."
+                    "(məs: 2026-08-14T09:00). Saat qurşağı offset-i YAZMA. "
+                    "Təkrarlananda İLK baş verəcək vaxtı ver."
+                ),
+            },
+            "recur": {
+                "type": "string",
+                "enum": ["daily", "weekly"],
+                "description": (
+                    "Təkrarlanma: 'daily'=hər gün, 'weekly'=hər həftə. "
+                    "Birdəfəlikdirsə YAZMA."
                 ),
             },
         },
@@ -35,7 +45,12 @@ class CreateReminderTool(Tool):
     }
 
     async def run(
-        self, ctx: ToolContext, text: str = "", remind_at: str = "", **_: Any
+        self,
+        ctx: ToolContext,
+        text: str = "",
+        remind_at: str = "",
+        recur: str | None = None,
+        **_: Any,
     ) -> str:
         text = (text or "").strip()
         if not text:
@@ -48,8 +63,11 @@ class CreateReminderTool(Tool):
                 "YYYY-MM-DDTHH:MM formatında ver."
             )
 
-        reminder = await create_reminder(ctx.session, ctx.user_id, text, when)
+        reminder = await create_reminder(ctx.session, ctx.user_id, text, when, recur=recur)
+        repeat = {"daily": " (hər gün 🔁)", "weekly": " (hər həftə 🔁)"}.get(
+            reminder.recur, ""
+        )
         return (
-            f"Xatırlatma #{reminder.id} quruldu: «{text}» — {fmt_local(when)}. "
+            f"Xatırlatma #{reminder.id} quruldu: «{text}» — {fmt_local(when)}{repeat}. "
             "Vaxtı çatanda sənə yazacağam."
         )

@@ -6,21 +6,50 @@ həmişə tz-aware datetime ilə aparılır (UTC), buna görə saat qurşağı t
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Reminder
 
+# Dəstəklənən təkrarlanma addımları.
+RECUR_STEPS = {"daily": timedelta(days=1), "weekly": timedelta(days=7)}
+
 
 async def create_reminder(
-    session: AsyncSession, user_id: int, text: str, remind_at: datetime
+    session: AsyncSession,
+    user_id: int,
+    text: str,
+    remind_at: datetime,
+    recur: str | None = None,
 ) -> Reminder:
-    reminder = Reminder(user_id=user_id, text=text, remind_at=remind_at)
+    recur = recur if recur in RECUR_STEPS else None
+    reminder = Reminder(user_id=user_id, text=text, remind_at=remind_at, recur=recur)
     session.add(reminder)
     await session.flush()
     return reminder
+
+
+def next_occurrence(remind_at: datetime, recur: str, now: datetime) -> datetime:
+    """Təkrarlanan xatırlatmanın `now`-dan sonrakı ilk vaxtı (bot dayanıbsa da düz)."""
+    step = RECUR_STEPS[recur]
+    nxt = remind_at
+    while nxt <= now:
+        nxt = nxt + step
+    return nxt
+
+
+async def reschedule_or_mark_sent(
+    session: AsyncSession, reminder: Reminder, now: datetime
+) -> None:
+    """Təkrarlanandırsa növbəti vaxta sürüşdür (sent=False qalır), yoxsa sent=True."""
+    if reminder.recur in RECUR_STEPS:
+        reminder.remind_at = next_occurrence(reminder.remind_at, reminder.recur, now)
+        reminder.sent = False
+    else:
+        reminder.sent = True
+    await session.flush()
 
 
 async def due_reminders(session: AsyncSession, now: datetime, limit: int = 50) -> list[Reminder]:
