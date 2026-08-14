@@ -36,7 +36,7 @@ from app.repositories.tasks import complete_task, list_open_tasks
 from app.repositories.usage import log_usage, usage_totals
 from app.repositories.users import get_or_create_user, update_settings
 from app.services.ingest_service import ingest_document, ingest_url
-from app.services.notes_service import capture_note
+from app.services.notes_service import capture_note, recapture_note
 from app.timeutils import fmt_local, now_local, now_utc
 
 log = get_logger("bot")
@@ -53,14 +53,15 @@ HELP = (
     "📖 *Əmrlər*\n"
     "/start — başlanğıc\n"
     "/help — bu kömək\n"
-    "/list — son qeydlər\n"
-    "/search <söz> — qeydlərdə axtarış\n"
+    "/list — son qeydlər (/list iş · /list #tag = filtr)\n"
+    "/search <söz> — qeydlərdə axtarış (cat:iş və ya #tag filtr)\n"
     "/tasks — açıq tapşırıqlar\n"
     "/done <id> — tapşırığı bağla\n"
     "/remind — gələn xatırlatmalar\n"
     "/stats — istifadə və xərc\n"
     "/export — qeydləri fayl kimi yüklə\n"
     "/delete <id> — qeydi sil (/delete all = hamısı)\n"
+    "/edit <id> <mətn> — qeydi yenilə (yenidən təmizlə+embed)\n"
     "/settings — brifinq ayarları\n"
     "/voice — səsli cavab (aç/söndür, səs seç)\n"
     "/id — Telegram ID\n\n"
@@ -347,14 +348,34 @@ async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # /list <kateqoriya>  və ya  /list #tag  → filtr; arqumentsiz → son qeydlər.
+    arg = " ".join(context.args).strip() if context.args else ""
+    category = tag = None
+    if arg.startswith("#"):
+        tag = arg[1:].strip().lower()
+    elif arg:
+        category = arg.lower()
+
     async with SessionLocal() as session:
-        notes = await list_notes(session, update.effective_user.id, limit=10)
+        notes = await list_notes(
+            session, update.effective_user.id, limit=10, category=category, tag=tag
+        )
 
     if not notes:
-        await update.message.reply_text("📭 Hələ qeyd yoxdur. Mətn və ya səs göndər.")
+        if category or tag:
+            flt = f"#{tag}" if tag else category
+            await update.message.reply_text(f"📭 '{flt}' üzrə qeyd tapılmadı.")
+        else:
+            await update.message.reply_text("📭 Hələ qeyd yoxdur. Mətn və ya səs göndər.")
         return
 
-    lines = ["🗒 *Son qeydlər:*\n"]
+    if tag:
+        header = f"🗒 *#{tag}* üzrə qeydlər:\n"
+    elif category:
+        header = f"🗒 *{category}* qeydləri:\n"
+    else:
+        header = "🗒 *Son qeydlər:*\n"
+    lines = [header]
     for i, note in enumerate(notes, 1):
         icon = "🎙" if note.source == NoteSource.voice else "📝"
         body = note.summary or note.cleaned_text or note.raw_text
@@ -364,10 +385,27 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_markdown("\n".join(lines))
 
 
+def _parse_search_args(args: list[str]) -> tuple[str, str | None, str | None]:
+    """/search arqumentlərindən sorğunu + `cat:<kat>` + `#tag` filtrlərini ayır."""
+    category = tag = None
+    query_parts: list[str] = []
+    for tok in args or []:
+        low = tok.lower()
+        if low.startswith("cat:"):
+            category = low[4:] or None
+        elif tok.startswith("#") and len(tok) > 1:
+            tag = tok[1:].lower()
+        else:
+            query_parts.append(tok)
+    return " ".join(query_parts).strip(), category, tag
+
+
 async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = " ".join(context.args).strip() if context.args else ""
+    query, category, tag = _parse_search_args(context.args or [])
     if not query:
-        await update.message.reply_text("İstifadə: /search <axtarış sözü>")
+        await update.message.reply_text(
+            "İstifadə: /search <söz>  ·  filtr: /search <söz> cat:iş  və ya  /search <söz> #tag"
+        )
         return
     if not providers.has("embed"):
         await update.message.reply_text("🔎 Axtarış deaktivdir (OPENAI_API_KEY yoxdur).")
@@ -375,10 +413,14 @@ async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     async with SessionLocal() as session:
         embedding = await providers.get("embed").embed_one(query)
-        hits = await search_notes_by_vector(session, update.effective_user.id, embedding, k=5)
+        hits = await search_notes_by_vector(
+            session, update.effective_user.id, embedding, k=5,
+            category=category, tag=tag,
+        )
 
     if not hits:
-        await update.message.reply_text(f"🔎 '{query}' üzrə nəticə tapılmadı.")
+        flt = (f" · {category}" if category else "") + (f" · #{tag}" if tag else "")
+        await update.message.reply_text(f"🔎 '{query}'{flt} üzrə nəticə tapılmadı.")
         return
 
     lines = [f"🔎 *'{query}'* üzrə nəticələr:\n"]
@@ -577,6 +619,39 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         ]]
     )
     await update.message.reply_text(f"Silinsin?\n#{note_id}: {preview}", reply_markup=kb)
+
+
+async def edit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/edit <id> <yeni mətn> — qeydi yenidən təmizləyib re-embed edir."""
+    args = context.args or []
+    if len(args) < 2 or not args[0].isdigit():
+        await update.message.reply_text("İstifadə: /edit <id> <yeni mətn>")
+        return
+    if not await _rate_ok(update):
+        return
+
+    note_id = int(args[0])
+    new_text = " ".join(args[1:]).strip()
+    uid = update.effective_user.id
+
+    async with SessionLocal() as session:
+        note = await get_note(session, note_id)
+        if note is None or note.user_id != uid:
+            await update.message.reply_text(f"🤷 #{note_id} nömrəli qeyd tapılmadı.")
+            return
+        await update.message.chat.send_action("typing")
+        llm = providers.get("llm") if providers.has("llm") else None
+        embedder = providers.get("embed") if providers.has("embed") else None
+        await recapture_note(session, note, new_text, llm=llm, embedder=embedder)
+        await session.commit()
+        cat, tags = note.category, list(note.tags or [])
+
+    reply = f"✏️ Qeyd #{note_id} yeniləndi."
+    if cat:
+        reply += f"\n🏷 {cat}"
+    if tags:
+        reply += f"\n#" + " #".join(tags)
+    await update.message.reply_text(reply)
 
 
 def _settings_text(s: dict) -> str:

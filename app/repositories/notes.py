@@ -37,13 +37,21 @@ async def create_note(
     return note
 
 
-async def list_notes(session: AsyncSession, user_id: int, limit: int = 20) -> list[Note]:
-    result = await session.execute(
-        select(Note)
-        .where(Note.user_id == user_id)
-        .order_by(Note.created_at.desc())
-        .limit(limit)
-    )
+async def list_notes(
+    session: AsyncSession,
+    user_id: int,
+    limit: int = 20,
+    *,
+    category: str | None = None,
+    tag: str | None = None,
+) -> list[Note]:
+    stmt = select(Note).where(Note.user_id == user_id)
+    if category:
+        stmt = stmt.where(func.lower(Note.category) == category.lower())
+    if tag:
+        stmt = stmt.where(Note.tags.any(tag.lower()))  # tag = ANY(notes.tags)
+    stmt = stmt.order_by(Note.created_at.desc()).limit(limit)
+    result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
@@ -89,17 +97,27 @@ async def count_notes_since(session: AsyncSession, user_id: int, since: datetime
 
 
 async def search_notes_by_vector(
-    session: AsyncSession, user_id: int, embedding: list[float], k: int = 5
+    session: AsyncSession,
+    user_id: int,
+    embedding: list[float],
+    k: int = 5,
+    *,
+    category: str | None = None,
+    tag: str | None = None,
 ) -> list[tuple[Note, float]]:
     """Cosine məsafəyə görə ən yaxın k qeydi qaytarır (RAG top-K).
 
+    category/tag verilibsə nəticələr həmin filtr üzrə məhdudlaşır.
     Returns: (Note, distance) — distance kiçikdirsə, daha oxşardır.
     """
     distance = Note.embedding.cosine_distance(embedding).label("distance")
-    result = await session.execute(
-        select(Note, distance)
-        .where(Note.user_id == user_id, Note.embedding.is_not(None))
-        .order_by(distance)
-        .limit(k)
+    stmt = select(Note, distance).where(
+        Note.user_id == user_id, Note.embedding.is_not(None)
     )
+    if category:
+        stmt = stmt.where(func.lower(Note.category) == category.lower())
+    if tag:
+        stmt = stmt.where(Note.tags.any(tag.lower()))
+    stmt = stmt.order_by(distance).limit(k)
+    result = await session.execute(stmt)
     return [(row[0], float(row[1])) for row in result.all()]

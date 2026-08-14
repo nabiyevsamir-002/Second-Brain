@@ -121,3 +121,40 @@ async def capture_note(
         embedded=embedding is not None,
     )
     return note
+
+
+async def recapture_note(
+    session: AsyncSession,
+    note: Note,
+    new_raw_text: str,
+    *,
+    llm: ClaudeLLMProvider | None = None,
+    embedder: Any | None = None,
+) -> Note:
+    """Mövcud qeydin mətnini yenilə: yenidən təmizlə + re-embed (/edit üçün).
+
+    Embedding dəyişdiyi üçün köhnə note_link-lər bir qədər köhnələ bilər (kritik
+    deyil — əlaqəli qeyd yalnız kəşf köməkçisidir).
+    """
+    note.raw_text = new_raw_text
+    if llm is not None:
+        meta = await _clean_and_categorize(session, llm, note.user_id, new_raw_text)
+        note.cleaned_text = (meta.get("cleaned_text") or "").strip() or None
+        note.summary = (meta.get("summary") or "").strip() or None
+        note.category = (meta.get("category") or "").strip() or None
+        raw_tags = meta.get("tags") or []
+        if isinstance(raw_tags, list):
+            note.tags = [str(t).strip().lower() for t in raw_tags if str(t).strip()][:5]
+
+    if embedder is not None:
+        text_to_embed = note.cleaned_text or new_raw_text
+        note.embedding = await embedder.embed_one(text_to_embed)
+        try:
+            etoks = getattr(embedder, "last_total_tokens", 0) or 0
+            await log_usage(session, note.user_id, "embed", tokens=etoks, cost=embed_cost(etoks))
+        except Exception:  # noqa: BLE001
+            pass
+
+    await session.flush()
+    log.info("note_edited", note_id=note.id, user_id=note.user_id, category=note.category)
+    return note

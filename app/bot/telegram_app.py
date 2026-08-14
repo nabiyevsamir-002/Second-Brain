@@ -37,6 +37,7 @@ def _register_common(app: Application, user_filter=None) -> None:
     cmd("stats", handlers.stats_cmd)
     cmd("export", handlers.export_cmd)
     cmd("delete", handlers.delete_cmd)
+    cmd("edit", handlers.edit_cmd)
     cmd("settings", handlers.settings_cmd)
     cmd("voice", handlers.voice_cmd)
 
