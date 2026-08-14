@@ -41,6 +41,7 @@ class NoteSource(str, enum.Enum):
     forward = "forward"
     pdf = "pdf"
     docx = "docx"
+    photo = "photo"
 
 
 class TaskStatus(str, enum.Enum):

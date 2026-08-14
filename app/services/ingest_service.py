@@ -8,6 +8,7 @@ ingest_document) çevrilə bilər.
 
 from __future__ import annotations
 
+import base64
 import io
 import re
 from typing import Any
@@ -22,7 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.logging_conf import get_logger
 from app.models import Note, NoteSource
+from app.pricing import embed_cost
 from app.repositories.notes import create_note
+from app.repositories.usage import log_llm_usage, log_usage
 from app.services.notes_service import _parse_json
 
 log = get_logger("ingest")
@@ -103,6 +106,86 @@ async def ingest_url(
         embedding=embedding,
     )
     log.info("url_ingested", note_id=note.id, url=url, chars=len(text))
+    return note
+
+
+# --- Şəkil (foto/skrinşot) → Claude vision OCR -----------------------------
+
+VISION_SYSTEM = (
+    "Sənə bir şəkil verilir (foto, ekran görüntüsü, sənəd şəkli, ağ lövhə, çek və s.). "
+    "Şəkildəki BÜTÜN mətni oxu (OCR) və qısa məzmun təsviri əlavə et. "
+    "Cavabı Azərbaycanca ver. YALNIZ bu JSON obyektini qaytar, başqa heç nə yazma:\n"
+    '{"text": "şəkildəki mətn + qısa təsvir", "summary": "1 cümləlik xülasə", '
+    '"category": "bir sözlük kateqoriya", "tags": ["2-4", "açar", "söz"]}'
+)
+
+
+async def ingest_image(
+    session: AsyncSession,
+    llm: Any,
+    embedder: Any,
+    user_id: int,
+    data: bytes,
+    caption: str = "",
+    media_type: str = "image/jpeg",
+) -> Note:
+    """Şəkli Claude vision ilə oxu (OCR + təsvir) → qeyd kimi saxla (source=photo).
+
+    Tək vision çağırışı həm mətni çıxarır, həm metadata verir (xərc balansı).
+    """
+    b64 = base64.b64encode(data).decode()
+    content: list[dict[str, Any]] = [
+        {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": b64},
+        }
+    ]
+    if caption:
+        content.append({"type": "text", "text": f"İstifadəçinin əlavə qeydi: {caption}"})
+
+    resp = await llm.complete(
+        system=VISION_SYSTEM,
+        messages=[{"role": "user", "content": content}],
+        model=settings.claude_model_fast,
+        max_tokens=1024,
+    )
+    try:
+        await log_llm_usage(session, user_id, settings.claude_model_fast, resp.usage)
+    except Exception:  # noqa: BLE001 — usage logu kritik deyil
+        pass
+
+    meta = _parse_json(llm.text_of(resp))
+    text = (meta.get("text") or "").strip()
+    if caption:
+        text = (f"[şəkil qeydi: {caption}]\n{text}").strip()
+    if not text:
+        raise ValueError("şəkildən mətn/məzmun çıxarıla bilmədi")
+
+    summary = (meta.get("summary") or "").strip() or None
+    category = (meta.get("category") or "").strip() or "şəkil"
+    tags = [str(t).strip().lower() for t in (meta.get("tags") or []) if str(t).strip()][:5]
+
+    embedding = None
+    if embedder is not None:
+        embedding = await embedder.embed_one(text[:2000])
+        try:
+            etoks = getattr(embedder, "last_total_tokens", 0) or 0
+            await log_usage(session, user_id, "embed", tokens=etoks, cost=embed_cost(etoks))
+        except Exception:  # noqa: BLE001
+            pass
+
+    note = await create_note(
+        session,
+        user_id,
+        text,
+        NoteSource.photo,
+        cleaned_text=text,
+        summary=summary,
+        category=category,
+        tags=tags,
+        embedding=embedding,
+    )
+    log.info("image_ingested", note_id=note.id, chars=len(text), category=category)
     return note
 
 

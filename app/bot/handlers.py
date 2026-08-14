@@ -36,7 +36,7 @@ from app.repositories.reminders import create_reminder, list_pending
 from app.repositories.tasks import complete_task, list_open_tasks
 from app.repositories.usage import log_usage, usage_totals
 from app.repositories.users import get_or_create_user, update_settings
-from app.services.ingest_service import ingest_document, ingest_url
+from app.services.ingest_service import ingest_document, ingest_image, ingest_url
 from app.services.notes_service import capture_note, recapture_note
 from app.timeutils import fmt_local, now_local, now_utc
 
@@ -72,6 +72,7 @@ HELP = (
     "• 📋 «hesabatı bitirmək tapşırığı əlavə et» → tapşırıq yaradıram\n"
     "• 🔗 link → səhifə xülasələnib saxlanılır\n"
     "• 📄 PDF / DOCX → mətn indeksləib axtarışa əlavə olunur\n"
+    "• 🖼 şəkil / skrinşot → Claude vision oxuyur (OCR) və qeyd yaradır\n"
     "• 🌐 «internetdə axtar...», cari xəbər/hava/qiymət → web axtarış (mənbə URL-li)"
 )
 
@@ -304,6 +305,51 @@ async def document_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if summary:
         reply += f"\n📝 {summary}"
     await update.message.reply_markdown(reply)
+
+
+async def photo_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Telegram şəklini Claude vision ilə oxu (OCR + təsvir) → qeyd."""
+    if not await _rate_ok(update):
+        return
+    if not (providers.has("llm") and providers.has("embed")):
+        await update.message.reply_text("🖼 Şəkil emalı üçün AI açarları lazımdır.")
+        return
+    photos = update.message.photo
+    if not photos:
+        return
+    photo = photos[-1]  # ən böyük ölçü
+    tg_file = await context.bot.get_file(photo.file_id)
+    data = bytes(await tg_file.download_as_bytearray())
+    caption = (update.message.caption or "").strip()
+
+    await update.message.chat.send_action("typing")
+    try:
+        async with SessionLocal() as session:
+            db_user = await get_or_create_user(
+                session, update.effective_user.id, name=update.effective_user.full_name
+            )
+            note = await ingest_image(
+                session,
+                providers.get("llm"),
+                providers.get("embed"),
+                db_user.telegram_id,
+                data,
+                caption=caption,
+            )
+            await session.commit()
+            reply = f"🖼 Şəkildən qeyd #{note.id} yaradıldı."
+            if note.category:
+                reply += f"\n🏷 {note.category}"
+            if note.summary:
+                reply += f"\n📝 {note.summary}"
+    except ValueError as exc:
+        await update.message.reply_text(f"🖼 Şəkil emal olunmadı: {exc}")
+        return
+    except Exception as exc:  # noqa: BLE001
+        log.error("photo_ingest_failed", error=str(exc))
+        await update.message.reply_text(f"🖼 Şəkil emalında xəta: {exc}")
+        return
+    await update.message.reply_text(reply)
 
 
 async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

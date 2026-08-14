@@ -48,14 +48,17 @@ def _register_common(app: Application, user_filter=None) -> None:
     text_filter = filters.TEXT & ~filters.COMMAND
     voice_filter = filters.VOICE | filters.AUDIO
     doc_filter = filters.Document.ALL
+    photo_filter = filters.PHOTO
     if user_filter is not None:
         text_filter = text_filter & user_filter
         voice_filter = voice_filter & user_filter
         doc_filter = doc_filter & user_filter
+        photo_filter = photo_filter & user_filter
 
     app.add_handler(MessageHandler(text_filter, handlers.note_text))
     app.add_handler(MessageHandler(voice_filter, handlers.note_voice))
     app.add_handler(MessageHandler(doc_filter, handlers.document_note))
+    app.add_handler(MessageHandler(photo_filter, handlers.photo_note))
 
 
 def build_application(post_init=None) -> Application:
