@@ -96,6 +96,24 @@ async def count_notes_since(session: AsyncSession, user_id: int, since: datetime
     return int(result.scalar() or 0)
 
 
+async def category_counts_since(
+    session: AsyncSession, user_id: int, since: datetime, limit: int = 5
+) -> list[tuple[str, int]]:
+    """`since`-dən bəri kateqoriya üzrə qeyd sayı, çoxdan aza (həftəlik digest)."""
+    result = await session.execute(
+        select(Note.category, func.count())
+        .where(
+            Note.user_id == user_id,
+            Note.created_at >= since,
+            Note.category.is_not(None),
+        )
+        .group_by(Note.category)
+        .order_by(func.count().desc())
+        .limit(limit)
+    )
+    return [(row[0], int(row[1])) for row in result.all()]
+
+
 async def search_notes_by_vector(
     session: AsyncSession,
     user_id: int,

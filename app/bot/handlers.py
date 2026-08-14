@@ -660,10 +660,12 @@ def _settings_text(s: dict) -> str:
     enabled = s.get("briefing_enabled", True)
     hour = int(s.get("briefing_hour", 8))
     status = "açıq 🔔" if enabled else "bağlı 🔕"
+    digest = "açıq 📊" if s.get("digest_enabled", False) else "bağlı 🔕"
     return (
         "⚙️ *Ayarlar*\n\n"
         f"Səhər brifinqi: *{status}*\n"
-        f"Saat: *{hour:02d}:00* (Asia/Baku)\n\n"
+        f"Saat: *{hour:02d}:00* (Asia/Baku)\n"
+        f"Həftəlik icmal (B.e.): *{digest}*\n\n"
         "Dəyişmək üçün düymələrdən istifadə et:"
     )
 
@@ -671,8 +673,13 @@ def _settings_text(s: dict) -> str:
 def _settings_keyboard(s: dict) -> InlineKeyboardMarkup:
     enabled = s.get("briefing_enabled", True)
     hour = int(s.get("briefing_hour", 8))
+    digest_on = s.get("digest_enabled", False)
     toggle = "🔕 Brifinqi söndür" if enabled else "🔔 Brifinqi aç"
-    rows = [[InlineKeyboardButton(toggle, callback_data="set:toggle")]]
+    digest_btn = "🔕 Həftəlik icmalı söndür" if digest_on else "📊 Həftəlik icmalı aç"
+    rows = [
+        [InlineKeyboardButton(toggle, callback_data="set:toggle")],
+        [InlineKeyboardButton(digest_btn, callback_data="set:digest")],
+    ]
     hours = [6, 7, 8, 9, 10, 21]
     btns = [
         InlineKeyboardButton(("• " if h == hour else "") + f"{h:02d}:00", callback_data=f"set:hour:{h}")
@@ -817,6 +824,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             s = dict(user.settings or {})
             if parts[1] == "toggle":
                 s["briefing_enabled"] = not s.get("briefing_enabled", True)
+            elif parts[1] == "digest":
+                s["digest_enabled"] = not s.get("digest_enabled", False)
             elif parts[1] == "hour":
                 s["briefing_hour"] = int(parts[2])
             s = await update_settings(session, uid, s)

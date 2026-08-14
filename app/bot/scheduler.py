@@ -18,7 +18,7 @@ from app.config import settings
 from app.db import SessionLocal
 from app.logging_conf import get_logger
 from app.models import TaskStatus
-from app.repositories.notes import count_notes_since
+from app.repositories.notes import category_counts_since, count_notes_since
 from app.repositories.reminders import (
     due_reminders,
     reminders_between,
@@ -32,6 +32,7 @@ log = get_logger("scheduler")
 
 REMINDER_INTERVAL_SEC = 60
 BRIEFING_DEFAULT_HOUR = 8  # local (Asia/Baku) — istifadəçi /settings ilə dəyişə bilər
+DIGEST_DEFAULT_WEEKDAY = 0  # Bazar ertəsi (0=Mon … 6=Sun) — həftəlik icmal günü
 
 
 def _reminder_keyboard(reminder_id: int) -> InlineKeyboardMarkup:
@@ -120,11 +121,80 @@ async def _build_briefing(session, user_id: int) -> str:
     return "\n".join(lines).strip()
 
 
-async def briefing_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Saatbaşı: hər istifadəçinin brifinq saatı gəlibsə (və aktivdirsə) göndərir.
+async def _build_digest(session, user_id: int) -> str:
+    """Həftəlik icmal — son 7 günün qeyd/tapşırıq/xatırlatma xülasəsi."""
+    now = now_utc()
+    week_ago = now - timedelta(days=7)
+    local = now_local()
 
-    Per-user settings: briefing_enabled (default True), briefing_hour (default 8).
-    Günə bir dəfə göndərilməsi üçün settings-də son göndərilmə tarixi saxlanılır.
+    user = await get_user(session, user_id)
+    name = (user.name.split()[0] if user and user.name else None)
+    greet = f"📊 Həftəlik icmal, {name}!" if name else "📊 Həftəlik icmal!"
+    lines = [greet, f"📅 {fmt_local(local, with_weekday=False)}", ""]
+
+    n_notes = await count_notes_since(session, user_id, week_ago)
+    lines.append(f"🗒 Bu həftə *{n_notes}* qeyd əlavə etdin.")
+
+    cats = await category_counts_since(session, user_id, week_ago)
+    if cats:
+        lines.append("🏷 Əsas mövzular: " + ", ".join(f"{c} ({n})" for c, n in cats))
+
+    open_tasks = await list_open_tasks(session, user_id, limit=100)
+    if open_tasks:
+        lines.append(f"📋 Açıq tapşırıqlar: *{len(open_tasks)}*")
+
+    upcoming = await reminders_between(session, user_id, now, now + timedelta(days=7))
+    if upcoming:
+        lines.append(f"⏰ Növbəti 7 gündə *{len(upcoming)}* xatırlatma.")
+
+    if not n_notes and not open_tasks and not upcoming:
+        lines.append("Bu həftə sakit keçdi. 🌱")
+
+    return "\n".join(lines).strip()
+
+
+async def _maybe_send_briefing(context, session, uid, s, local, today) -> None:
+    if not s.get("briefing_enabled", True):
+        return
+    if int(s.get("briefing_hour", BRIEFING_DEFAULT_HOUR)) != local.hour:
+        return
+    if s.get("briefing_last_sent") == today:
+        return  # bu gün artıq göndərilib
+    try:
+        text = await _build_briefing(session, uid)
+        await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown")
+        await update_settings(session, uid, {"briefing_last_sent": today})
+        log.info("briefing_sent", user_id=uid, hour=local.hour)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("briefing_failed", user_id=uid, error=str(exc))
+
+
+async def _maybe_send_digest(context, session, uid, s, local) -> None:
+    if not s.get("digest_enabled", False):  # opt-in (default söndürülü)
+        return
+    weekday = int(s.get("digest_weekday", DIGEST_DEFAULT_WEEKDAY))
+    hour = int(s.get("briefing_hour", BRIEFING_DEFAULT_HOUR))
+    if local.weekday() != weekday or local.hour != hour:
+        return
+    iso = local.isocalendar()
+    week_key = f"{iso.year}-W{iso.week:02d}"
+    if s.get("digest_last_sent") == week_key:
+        return  # bu həftə artıq göndərilib
+    try:
+        text = await _build_digest(session, uid)
+        await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown")
+        await update_settings(session, uid, {"digest_last_sent": week_key})
+        log.info("digest_sent", user_id=uid, week=week_key)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("digest_failed", user_id=uid, error=str(exc))
+
+
+async def briefing_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Saatbaşı: səhər brifinqi (gündəlik) + həftəlik digest yoxlaması.
+
+    Per-user settings: briefing_enabled (default True), briefing_hour (default 8),
+    digest_enabled (default False, opt-in), digest_weekday (default 0=B.e.).
+    Təkrarın qarşısını almaq üçün son göndərilmə açarları saxlanılır.
     """
     recipients = settings.allowed_ids
     if not recipients:
@@ -136,19 +206,8 @@ async def briefing_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         for uid in recipients:
             user = await get_user(session, uid)
             s = (user.settings if user else {}) or {}
-            if not s.get("briefing_enabled", True):
-                continue
-            if int(s.get("briefing_hour", BRIEFING_DEFAULT_HOUR)) != local.hour:
-                continue
-            if s.get("briefing_last_sent") == today:
-                continue  # bu gün artıq göndərilib
-            try:
-                text = await _build_briefing(session, uid)
-                await context.bot.send_message(chat_id=uid, text=text, parse_mode="Markdown")
-                await update_settings(session, uid, {"briefing_last_sent": today})
-                log.info("briefing_sent", user_id=uid, hour=local.hour)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("briefing_failed", user_id=uid, error=str(exc))
+            await _maybe_send_briefing(context, session, uid, s, local, today)
+            await _maybe_send_digest(context, session, uid, s, local)
         await session.commit()
 
 
