@@ -49,9 +49,9 @@ source ENUM[voice,text,forward,pdf,docx], embedding vector(1536), created_at)` �
 `usage_log(id, user_id FK, kind, tokens, cost, created_at)`
 
 ## Əmrlər
-`/start` `/help` `/list` `/search` `/id` `/tasks` `/done` `/remind`
-`/stats` `/export` `/delete` `/edit` `/settings` `/voice` (hazır — Azure `az-AZ` səsli cavab)
-`/list iş`·`/list #tag`·`/search <söz> cat:iş #tag` (filtr) · `/settings`-də həftəlik digest toggle
+`/start` `/help` `/list` `/pinned` `/search` `/id` `/tasks` `/done` `/remind`
+`/stats` `/health` `/export` `/delete` `/edit` `/settings` `/voice` (hazır — Azure `az-AZ` səsli cavab)
+`/list iş`·`/list #tag`·`/search <söz> cat:iş #tag` (filtr) · `/list`-də ☆/🗑 düymələr · `/voice mirror`
 
 ## Təhlükəsizlik
 - Allowlist — yalnız Samir-in telegram_id (`ALLOWED_USER_IDS`).

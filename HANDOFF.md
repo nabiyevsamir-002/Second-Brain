@@ -48,6 +48,25 @@ lokal smoke test keçdi; real image tam import olundu.
 
 **⏳ MANUAL (server, Samir):** həftəlik backup-verify cron (aşağı bax). Digest istəyirsənsə `/settings`-də aç.
 
+## 🚀 Phase 6.2 — Daha çox feature (2026-08-17, canlı deploy edildi)
+
+Samir seçdi, hamısı lokal smoke test + fresh/existing migration + real image import keçdi.
+**Migration 0004** (additive): `notes.pinned`, `tasks.recur`, `tasks.completed_at`.
+- **🎙️ Səs→səs mirror** — səsli mesaja avtomatik səslə cavab (`voice_mirror` setting, default AÇIQ;
+  `/voice mirror` toggle). Həmişə-səsli `voice_reply`-dan asılı deyil.
+- **🗑️/📌 /list düymələri** — hər qeyddə ☆/📌 (pin toggle) + 🗑 (sil); siyahını yerində yeniləyir.
+  `/pinned` sabitlənmişləri göstərir; pinned qeydlər əvvəl gəlir. (Filtrli /list mətn-only qalır.)
+- **🔁 Təkrarlanan tapşırıq** — `tasks.recur` (daily/weekly/monthly); `/done` edəndə növbəti nüsxə
+  yaranır (`next_task_occurrence`, ay-sonu clamp), `completed_at` yazılır. create_task tool + `/tasks` 🔁.
+- **🧾 Kateqoriya xülasəsi** — `summarize_category` agent tool ("iş qeydlərimi xülasə et").
+- **📊 Fəaliyyət hesabatı** — `activity_report` agent tool ("bu həftə nə etdim?"; completed_at-dan istifadə).
+- **🌍 Cavab dili** — agent istifadəçinin dilində cavab verir (default AZ) — system prompt dəyişikliyi.
+- **❓ Ağıllı sual** — niyyət/vaxt HƏQİQƏTƏN qeyri-müəyyəndirsə agent bir qısa dəqiqləşdirici sual verir
+  (konservativ — hər mesajda yox). ⚠️ Demo zamanı bunu nəzərə al.
+- **🔔 Qeyddən xatırlatma** — "bunu sabah xatırlat" kontekstdəki qeyddən xatırlatma qurur (prompt hint).
+
+Yeni agent alətləri: `summarize_category`, `activity_report` (cəmi 6+web_search). Yeni əmr: `/pinned`.
+
 ## ☁️ GitHub + Deploy (2026-08-13)
 - Repo: **https://github.com/nebiyevsamir002-star/AI-Assistant** — **PRIVATE**.
 - Branch **`main`** (tracking qurulub → sadəcə `git push`). HTTPS auth osxkeychain token.
