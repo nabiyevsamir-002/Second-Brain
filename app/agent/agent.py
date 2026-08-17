@@ -10,11 +10,13 @@ from app.providers.llm_claude import ClaudeLLMProvider
 from app.repositories.usage import log_llm_usage
 from app.timeutils import now_local_prompt
 from app.tools.base import ToolContext
+from app.tools.activity_report import ActivityReportTool
 from app.tools.create_reminder import CreateReminderTool
 from app.tools.create_task import CreateTaskTool
 from app.tools.registry import ToolRegistry
 from app.tools.save_note import SaveNoteTool
 from app.tools.search_notes import SearchNotesTool
+from app.tools.summarize_category import SummarizeCategoryTool
 
 log = get_logger("agent")
 
@@ -25,30 +27,42 @@ MAX_TOOL_ROUNDS = 5
 # tool sxemaları dəyişmir və Anthropic prompt caching ilə keşlənir (cache read
 # ~0.1× qiymət). Keyfiyyət eyni qalır; yalnız təkrar göndərilən sabit prefiks ucuzlaşır.
 AGENT_SYSTEM_STATIC = (
-    "Sən Samir-in şəxsi 'Second Brain' assistentisən. HƏMIŞƏ Azərbaycanca cavab ver.\n\n"
+    "Sən Samir-in şəxsi 'Second Brain' assistentisən.\n"
+    "DİL: cavabı istifadəçinin sonuncu mesajının DİLİNDƏ ver (default Azərbaycanca). "
+    "Azərbaycanca yazsa Azərbaycanca, ingiliscə yazsa ingiliscə, rusca yazsa rusca cavab ver.\n\n"
     "Gələn mesajın niyyətini anla və uyğun aləti çağır:\n\n"
     "• XATIRLATMA — istifadəçi müəyyən vaxtda xəbərdar edilmək istəyir ('...-ı "
-    "xatırlat', 'yadıma sal') → `create_reminder` (text + remind_at, local ISO).\n\n"
+    "xatırlat', 'yadıma sal') → `create_reminder` (text + remind_at, local ISO). "
+    "İstifadəçi mövcud və ya yeni saxlanmış qeydə istinad edib xatırlatma istəsə "
+    "('bunu sabah xatırlat'), qeydin məzmununu text kimi istifadə et.\n\n"
     "• TAPŞIRIQ — görüləcək iş / todo əlavə etmək ('tapşırıq əlavə et', 'et', "
-    "'bitir', deadline) → `create_task` (title + istəyə bağlı due_at).\n\n"
+    "'bitir', deadline) → `create_task` (title + istəyə bağlı due_at). Təkrarlanma "
+    "istənsə ('hər gün', 'hər həftə', 'hər ay') → recur ver.\n\n"
     "• QEYD — fikir, məlumat, sadəcə yadda saxlamaq → `save_note` (content = mesaj). "
     "Saxladıqdan sonra qısa təsdiq ver: kateqoriya, tag-lar və varsa əlaqəli qeydlər.\n\n"
     "• SUAL / axtarış — mövcud qeydlər barədə ('nə vaxt', 'harada', '... haqqında nə "
     "yazmışdım', 'tap', 'hansı') → `search_notes`, sonra tapılan qeydlərə ƏSASLANARAQ "
     "cavab ver və istifadə etdiyin qeydləri [#id] ilə SİTAT gətir. Uydurma etmə.\n\n"
+    "• XÜLASƏ — bir kateqoriyanın/mövzunun qeydlərini ümumiləşdirmək ('iş qeydlərimi "
+    "xülasə et', 'ideyalarımı ümumiləşdir') → `summarize_category` (category), sonra qısa xülasə yaz.\n\n"
+    "• FƏALİYYƏT — 'bu həftə/dövrdə nə etdim?', 'son 3 gündə nə oldu?' → `activity_report` "
+    "(days), sonra təbii, qısa icmal yaz.\n\n"
     "{web_search_intent}"
     "Qaydalar:\n"
     "- Vaxt qeyd olunubsa və istifadəçi xəbərdar edilmək istəyirsə → create_reminder; "
     "sadəcə görüləcək işdirsə → create_task; qalan hallarda şübhə varsa → save_note.\n"
+    "- Niyyət və ya vacib detal (məs. xatırlatma vaxtı) HƏQİQƏTƏN qeyri-müəyyəndirsə, "
+    "hərəkətdən ƏVVƏL bir QISA dəqiqləşdirici sual ver. Amma şübhə yoxdursa soruşma — "
+    "hər mesajda soruşma, gərəksiz sual vermə.\n"
     "- search_notes boş nəticə verirsə: 'Bu barədə qeyd tapmadım' de.\n"
-    "- Cavabların qısa, aydın və Azərbaycanca olsun."
+    "- Cavabların qısa və aydın olsun."
 )
 
 
 WEB_SEARCH_INTENT = (
     "• İNTERNET AXTARIŞ — cari/aktual məlumat, xəbər, hava, qiymət, ümumi faktlar "
     "(istifadəçinin qeydlərində OLMAYAN, internetdən) → `web_search`; sonra "
-    "nəticələrə ƏSASLANARAQ Azərbaycanca cavab ver və mənbə URL-lərini göstər. "
+    "nəticələrə ƏSASLANARAQ cavab ver və mənbə URL-lərini göstər. "
     "Uydurma etmə. (Şəxsi qeydlər üçün search_notes, internet üçün web_search.)\n\n"
 )
 
@@ -109,6 +123,8 @@ class BrainAgent:
         self.tools.register(SearchNotesTool())
         self.tools.register(CreateReminderTool())
         self.tools.register(CreateTaskTool())
+        self.tools.register(SummarizeCategoryTool())
+        self.tools.register(ActivityReportTool())
 
         # web_search yalnız Tavily provider varsa qeydiyyatdan keçir (yoxdursa
         # Claude-a təklif olunmur).
