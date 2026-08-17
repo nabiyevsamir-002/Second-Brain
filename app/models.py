@@ -79,6 +79,7 @@ class Note(Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     category: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default="{}")
+    pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     source: Mapped[NoteSource] = mapped_column(
         SAEnum(NoteSource, name="note_source", create_type=False), nullable=False
     )
@@ -119,6 +120,10 @@ class Task(Base):
     source_note_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("notes.id", ondelete="SET NULL"), nullable=True
     )
+    # Təkrarlanma: NULL = birdəfəlik, 'daily'/'weekly'/'monthly'.
+    recur: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Tamamlanma vaxtı ('what did I do this week' üçün).
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = _created_at()
 
 

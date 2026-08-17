@@ -44,15 +44,31 @@ async def list_notes(
     *,
     category: str | None = None,
     tag: str | None = None,
+    pinned_only: bool = False,
 ) -> list[Note]:
     stmt = select(Note).where(Note.user_id == user_id)
     if category:
         stmt = stmt.where(func.lower(Note.category) == category.lower())
     if tag:
         stmt = stmt.where(Note.tags.any(tag.lower()))  # tag = ANY(notes.tags)
-    stmt = stmt.order_by(Note.created_at.desc()).limit(limit)
+    if pinned_only:
+        stmt = stmt.where(Note.pinned.is_(True))
+    # Sabitlənmişlər (pinned) əvvəl, sonra yeni → köhnə.
+    stmt = stmt.order_by(Note.pinned.desc(), Note.created_at.desc()).limit(limit)
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def set_pinned(
+    session: AsyncSession, user_id: int, note_id: int, pinned: bool | None = None
+) -> Note | None:
+    """Qeydi sabitlə/aç. pinned=None → toggle. Sahibi deyilsə None."""
+    note = await session.get(Note, note_id)
+    if note is None or note.user_id != user_id:
+        return None
+    note.pinned = (not note.pinned) if pinned is None else pinned
+    await session.flush()
+    return note
 
 
 async def get_note(session: AsyncSession, note_id: int) -> Note | None:
