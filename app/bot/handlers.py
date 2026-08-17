@@ -36,6 +36,7 @@ from app.repositories.notes import (
     get_note,
     hybrid_search_notes,
     list_notes,
+    set_pinned,
 )
 from app.repositories.reminders import create_reminder, list_pending
 from app.repositories.tasks import complete_task, list_open_tasks
@@ -59,7 +60,8 @@ HELP = (
     "📖 *Əmrlər*\n"
     "/start — başlanğıc\n"
     "/help — bu kömək\n"
-    "/list — son qeydlər (/list iş · /list #tag = filtr)\n"
+    "/list — son qeydlər (☆ sabitlə · 🗑 sil düymələri; /list iş · /list #tag = filtr)\n"
+    "/pinned — sabitlənmiş (pin) qeydlər\n"
     "/search <söz> — qeydlərdə axtarış (cat:iş və ya #tag filtr)\n"
     "/tasks — açıq tapşırıqlar\n"
     "/done <id> — tapşırığı bağla\n"
@@ -75,7 +77,9 @@ HELP = (
     "*Nə göndərə bilərsən:*\n"
     "• 📝 mətn / 🎙 səs → qeyd, sual, tapşırıq və ya xatırlatma\n"
     "• ⏰ «sabah 9-da həkimə zəng etməyi xatırlat» → xatırlatma qururam\n"
-    "• 📋 «hesabatı bitirmək tapşırığı əlavə et» → tapşırıq yaradıram\n"
+    "• 📋 «hesabatı bitirmək tapşırığı əlavə et» → tapşırıq (təkrarlanan da: «hər həftə...»)\n"
+    "• 🧾 «iş qeydlərimi xülasə et» → kateqoriyanın icması\n"
+    "• 📊 «bu həftə nə etdim?» → fəaliyyət icmalı\n"
     "• 🔗 link → səhifə xülasələnib saxlanılır\n"
     "• 📄 PDF / DOCX → mətn indeksləib axtarışa əlavə olunur\n"
     "• 🖼 şəkil / skrinşot → Claude vision oxuyur (OCR) və qeyd yaradır\n"
@@ -220,7 +224,13 @@ async def _speak_reply(update: Update, text: str, voice_name: str | None = None)
     log.info("voice_reply_sent", user_id=update.effective_user.id, chars=len(spoken))
 
 
-async def _run_agent(update: Update, raw_text: str, source: NoteSource, prefix: str = "") -> None:
+async def _run_agent(
+    update: Update,
+    raw_text: str,
+    source: NoteSource,
+    prefix: str = "",
+    input_is_voice: bool = False,
+) -> None:
     user = update.effective_user
     agent = providers.get("agent") if providers.has("agent") else None
 
@@ -249,13 +259,15 @@ async def _run_agent(update: Update, raw_text: str, source: NoteSource, prefix: 
         await add_message(session, db_user.telegram_id, "user", raw_text)
         await add_message(session, db_user.telegram_id, "assistant", reply)
         await session.commit()
-        voice_on, voice_name = _voice_settings(db_user.settings)
+        s = db_user.settings or {}
+        voice_on, voice_name = _voice_settings(s)
+        voice_mirror = bool(s.get("voice_mirror", True))
 
     # Plain text — agent cavabındakı [#id] və s. Markdown-ı pozmasın deyə.
     await update.message.reply_text(prefix + reply)
 
-    # Səsli cavab açıqdırsa — eyni cavabı səsli qeyd kimi də göndər (prefiks/echo yox).
-    if voice_on:
+    # Səsli cavab: açıqdırsa HƏR mesajda; ya da səslə yazıblarsa (mirror) səslə cavab ver.
+    if voice_on or (voice_mirror and input_is_voice):
         await _speak_reply(update, reply, voice_name)
 
 
@@ -439,45 +451,78 @@ async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         pass
 
     log.info("voice_transcribed", user_id=update.effective_user.id, chars=len(transcript))
-    await _run_agent(update, transcript, NoteSource.voice, prefix=f"🎙 _{transcript}_\n\n")
+    await _run_agent(
+        update, transcript, NoteSource.voice,
+        prefix=f"🎙 _{transcript}_\n\n", input_is_voice=True,
+    )
+
+
+def _note_line(note) -> str:
+    icon = "🎙" if note.source == NoteSource.voice else "📝"
+    body = (note.summary or note.cleaned_text or note.raw_text or "")
+    body = body[:70] + ("…" if len(body) > 70 else "")
+    pin = "📌 " if note.pinned else ""
+    cat = f" · _{note.category}_" if note.category else ""
+    return f"{pin}#{note.id} {icon} {body}{cat}"
+
+
+async def _build_list_view(session, uid: int, *, pinned_only: bool = False):
+    """(mətn, klaviatura) qaytarır — hər qeyddə ☆/📌 (pin) + 🗑 (sil) düyməsi. Qeyd yoxdursa (None, None)."""
+    notes = await list_notes(session, uid, limit=10, pinned_only=pinned_only)
+    if not notes:
+        return None, None
+    header = "📌 *Sabitlənmiş qeydlər:*\n" if pinned_only else "🗒 *Son qeydlər:*\n"
+    lines = [header] + [_note_line(n) for n in notes]
+    ns = "lp" if pinned_only else "ln"
+    rows = []
+    for n in notes:
+        pin_lbl = ("📌 " if n.pinned else "☆ ") + f"#{n.id}"
+        rows.append([
+            InlineKeyboardButton(pin_lbl, callback_data=f"{ns}:pin:{n.id}"),
+            InlineKeyboardButton(f"🗑 #{n.id}", callback_data=f"{ns}:del:{n.id}"),
+        ])
+    return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # /list <kateqoriya>  və ya  /list #tag  → filtr; arqumentsiz → son qeydlər.
+    # /list <kateqoriya>  və ya  /list #tag  → filtr (mətn); arqumentsiz → düymələrlə.
     arg = " ".join(context.args).strip() if context.args else ""
+    uid = update.effective_user.id
     category = tag = None
     if arg.startswith("#"):
         tag = arg[1:].strip().lower()
     elif arg:
         category = arg.lower()
 
-    async with SessionLocal() as session:
-        notes = await list_notes(
-            session, update.effective_user.id, limit=10, category=category, tag=tag
-        )
-
-    if not notes:
-        if category or tag:
+    if category or tag:
+        async with SessionLocal() as session:
+            notes = await list_notes(session, uid, limit=10, category=category, tag=tag)
+        if not notes:
             flt = f"#{tag}" if tag else category
             await update.message.reply_text(f"📭 '{flt}' üzrə qeyd tapılmadı.")
-        else:
-            await update.message.reply_text("📭 Hələ qeyd yoxdur. Mətn və ya səs göndər.")
+            return
+        header = f"🗒 *#{tag}* üzrə qeydlər:\n" if tag else f"🗒 *{category}* qeydləri:\n"
+        lines = [header] + [_note_line(n) for n in notes]
+        await update.message.reply_markdown("\n".join(lines))
         return
 
-    if tag:
-        header = f"🗒 *#{tag}* üzrə qeydlər:\n"
-    elif category:
-        header = f"🗒 *{category}* qeydləri:\n"
-    else:
-        header = "🗒 *Son qeydlər:*\n"
-    lines = [header]
-    for i, note in enumerate(notes, 1):
-        icon = "🎙" if note.source == NoteSource.voice else "📝"
-        body = note.summary or note.cleaned_text or note.raw_text
-        body = body[:80] + ("…" if len(body) > 80 else "")
-        cat = f" · _{note.category}_" if note.category else ""
-        lines.append(f"{i}. {icon} {body}{cat}")
-    await update.message.reply_markdown("\n".join(lines))
+    async with SessionLocal() as session:
+        text, kb = await _build_list_view(session, uid)
+    if text is None:
+        await update.message.reply_text("📭 Hələ qeyd yoxdur. Mətn və ya səs göndər.")
+        return
+    await update.message.reply_markdown(text, reply_markup=kb)
+
+
+async def pinned_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async with SessionLocal() as session:
+        text, kb = await _build_list_view(session, update.effective_user.id, pinned_only=True)
+    if text is None:
+        await update.message.reply_text(
+            "📌 Sabitlənmiş qeyd yoxdur. /list-də ☆ düyməsi ilə qeyd sabitlə."
+        )
+        return
+    await update.message.reply_markdown(text, reply_markup=kb)
 
 
 def _parse_search_args(args: list[str]) -> tuple[str, str | None, str | None]:
@@ -547,7 +592,8 @@ async def tasks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             overdue = t.due_at <= now
             when = fmt_local(t.due_at, with_weekday=False)
             suffix = f" · ⚠️ gecikib ({when})" if overdue else f" · ⏳ {when}"
-        lines.append(f"#{t.id} — {t.title}{suffix}")
+        rep = " 🔁" if t.recur else ""
+        lines.append(f"#{t.id} — {t.title}{suffix}{rep}")
     lines.append("\n_Bağlamaq üçün:_ /done <id>")
     await update.message.reply_markdown("\n".join(lines))
 
@@ -564,7 +610,8 @@ async def done_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if task is None:
         await update.message.reply_text(f"🤷 #{task_id} nömrəli açıq tapşırıq tapılmadı.")
         return
-    await update.message.reply_text(f"✅ Tapşırıq #{task.id} bağlandı: «{task.title}»")
+    extra = " · 🔁 növbəti təkrar yaradıldı" if task.recur else ""
+    await update.message.reply_text(f"✅ Tapşırıq #{task.id} bağlandı: «{task.title}»{extra}")
 
 
 async def remind_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -797,13 +844,16 @@ async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 def _voice_status_text(s: dict) -> str:
     enabled, name = _voice_settings(s)
     status = "açıq 🔊" if enabled else "bağlı 🔇"
+    mirror = "açıq 🎙️" if s.get("voice_mirror", True) else "bağlı 🔇"
     label = _VOICE_LABELS.get(name, name)
     return (
         "🔊 *Səsli cavab*\n\n"
-        f"Vəziyyət: *{status}*\n"
+        f"Həmişə səslə cavab: *{status}*\n"
+        f"Səslə yazanda səslə cavab (mirror): *{mirror}*\n"
         f"Səs: *{label}*\n\n"
         "İdarə:\n"
         "• /voice — aç/söndür\n"
+        "• /voice mirror — «səslə yaz → səslə cavab» aç/söndür\n"
         "• /voice babek | banu — səsi seç\n"
         "• /voice test — nümunə səs eşit"
     )
@@ -837,6 +887,8 @@ async def voice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if arg in AZ_VOICES:  # səs seçimi + səsli cavabı aç
             s["voice_name"] = AZ_VOICES[arg]
             s["voice_reply"] = True
+        elif arg == "mirror":  # «səslə yaz → səslə cavab» toggle
+            s["voice_mirror"] = not s.get("voice_mirror", True)
         elif arg == "on":
             s["voice_reply"] = True
         elif arg == "off":
@@ -845,7 +897,7 @@ async def voice_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             s["voice_reply"] = not s.get("voice_reply", False)
         else:
             await update.message.reply_text(
-                "İstifadə: /voice  (aç/söndür) · /voice babek|banu · /voice test"
+                "İstifadə: /voice (aç/söndür) · /voice mirror · /voice babek|banu · /voice test"
             )
             return
 
@@ -891,6 +943,25 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     await q.edit_message_text(f"✅ Təkrarlanma dayandırıldı: «{text}»")
                 else:
                     await q.edit_message_text(f"✅ Bağlandı: «{text}»")
+        return
+
+    # /list · /pinned düymələri: sil / sabitlə (toggle) → siyahını yenilə.
+    if data.startswith("ln:") or data.startswith("lp:"):
+        ns, action, sid = data.split(":")
+        nid = int(sid)
+        pinned_view = ns == "lp"
+        async with SessionLocal() as session:
+            if action == "del":
+                await delete_note(session, uid, nid)
+            elif action == "pin":
+                await set_pinned(session, uid, nid)  # toggle
+            await session.commit()
+            text, kb = await _build_list_view(session, uid, pinned_only=pinned_view)
+        if text is None:
+            msg = "📌 Sabitlənmiş qeyd qalmadı." if pinned_view else "📭 Qeyd qalmadı."
+            await q.edit_message_text(msg)
+        else:
+            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
         return
 
     if data.startswith("del:one:"):

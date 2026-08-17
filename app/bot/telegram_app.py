@@ -30,6 +30,7 @@ def _register_common(app: Application, user_filter=None) -> None:
     cmd("help", handlers.help_cmd)
     cmd("id", handlers.whoami)
     cmd("list", handlers.list_cmd)
+    cmd("pinned", handlers.pinned_cmd)
     cmd("search", handlers.search_cmd)
     cmd("tasks", handlers.tasks_cmd)
     cmd("done", handlers.done_cmd)
