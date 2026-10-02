@@ -1,5 +1,23 @@
 # Second Brain — Personal AI Assistant (Telegram)
 
+## Overview (English)
+
+A personal "second brain" on Telegram, built Azerbaijani-first. You send it voice or text notes, links, PDFs and DOCX files. It stores them in PostgreSQL with vector embeddings, and you can then ask questions about your own notes in natural language (RAG semantic search). The bot is live and in daily use.
+
+- **Capture:** voice messages are transcribed, and documents and links are extracted, so everything becomes searchable text.
+- **Ask:** a Claude-powered agent searches your notes and answers from them.
+- **Act:** you can create reminders and tasks in plain language (for example, "remind me to call the doctor tomorrow at 9"). It also sends a daily morning briefing with open tasks, reminders and recent notes.
+- **Manage:** `/stats` shows message, token and estimated cost usage. `/export` downloads all notes as Markdown. `/delete` removes notes, and `/settings` controls the briefing.
+- **Operations:** runs with Docker Compose. Migrations apply automatically on start, PostgreSQL is backed up every night, and GitHub Actions deploys to a VPS on every push.
+
+**Stack:** Python 3.11 · python-telegram-bot (async) · Claude API · OpenAI Whisper and embeddings · Azure Speech (az-AZ) · PostgreSQL 16 + pgvector · SQLAlchemy (async) + Alembic · Docker
+
+**Quick start:** `cp .env.example .env` (set at least `TELEGRAM_BOT_TOKEN`), then `make up`.
+
+*The rest of this README is in Azerbaijani.*
+
+---
+
 Şəxsi "ikinci beyin": Telegram üzərindən səsli və mətn qeydlər al, sonra
 təbii dildə bu qeydlərlə söhbət et (RAG semantik axtarış).
 
