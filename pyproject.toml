@@ -29,8 +29,14 @@ dependencies = [
     "tavily-python>=0.5",                          # web axtarış (agent web_search tool)
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]  # pip install -e ".[dev]" && pytest
+
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100

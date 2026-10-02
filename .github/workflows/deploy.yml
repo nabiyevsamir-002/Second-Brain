@@ -10,6 +10,8 @@ on:
       - "**.md"
       - ".gitignore"
       - "LICENSE"
+      - "tests/**"
+      - ".github/workflows/tests.yml"
   workflow_dispatch: {} # Actions → Deploy to VPS → Run workflow (əl ilə)
 
 concurrency:
