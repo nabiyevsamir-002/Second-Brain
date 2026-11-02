@@ -1,0 +1,20 @@
+# Paylaşılan host üçün əlavə (JobRadar ilə eyni noutbuk). scripts/linux/install.sh bunu .env-də
+# COMPOSE_FILE ilə qoşur, ona görə sadə `docker compose ...` əmrləri də avtomatik işlədir.
+# Məqsəd: Second Brain heç vaxt yanındakı production xidmətləri sıxışdırmasın.
+services:
+  db:
+    # DB yalnız konteyner şəbəkəsində: backup `docker exec` ilə gedir, host portu lazım deyil.
+    ports: !reset []
+    mem_limit: 1g
+    logging: &logs
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  bot:
+    mem_limit: 5g            # ölçülmüş pik ~2.4 GB (modellər + Claude CLI)
+    memswap_limit: 5g
+    cpu_shares: 256          # CPU üçün yarışda digər xidmətlər üstün (default 1024)
+    oom_score_adj: 500       # yaddaş böhranında əvvəlcə bu konteyner ölür, JobRadar yox
+    logging: *logs

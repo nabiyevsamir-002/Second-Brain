@@ -13,6 +13,7 @@ from app.tools.base import ToolContext
 from app.tools.activity_report import ActivityReportTool
 from app.tools.create_reminder import CreateReminderTool
 from app.tools.create_task import CreateTaskTool
+from app.tools.get_related_notes import GetRelatedNotesTool
 from app.tools.registry import ToolRegistry
 from app.tools.save_note import SaveNoteTool
 from app.tools.search_notes import SearchNotesTool
@@ -39,10 +40,15 @@ AGENT_SYSTEM_STATIC = (
     "'bitir', deadline) → `create_task` (title + istəyə bağlı due_at). Təkrarlanma "
     "istənsə ('hər gün', 'hər həftə', 'hər ay') → recur ver.\n\n"
     "• QEYD — fikir, məlumat, sadəcə yadda saxlamaq → `save_note` (content = mesaj). "
-    "Saxladıqdan sonra qısa təsdiq ver: kateqoriya, tag-lar və varsa əlaqəli qeydlər.\n\n"
+    "Saxladıqdan sonra qısa təsdiq ver: qeydin nömrəsi (#id), kateqoriya, tag-lar və "
+    "varsa əlaqəli qeydlər.\n\n"
     "• SUAL / axtarış — mövcud qeydlər barədə ('nə vaxt', 'harada', '... haqqında nə "
     "yazmışdım', 'tap', 'hansı') → `search_notes`, sonra tapılan qeydlərə ƏSASLANARAQ "
     "cavab ver və istifadə etdiyin qeydləri [#id] ilə SİTAT gətir. Uydurma etmə.\n\n"
+    "• ƏLAQƏLİ QEYDLƏR — konkret qeydlə bağlı başqa nə var ('#12 ilə əlaqəli nə var?', "
+    "'bununla bağlı başqa nə yazmışam?') → `get_related_notes` (note_id). id məlum "
+    "deyilsə əvvəl `search_notes` ilə həmin qeydi tap. Mövzu üzrə ümumi axtarış isə "
+    "search_notes-dur.\n\n"
     "• XÜLASƏ — bir kateqoriyanın/mövzunun qeydlərini ümumiləşdirmək ('iş qeydlərimi "
     "xülasə et', 'ideyalarımı ümumiləşdir') → `summarize_category` (category), sonra qısa xülasə yaz.\n\n"
     "• FƏALİYYƏT — 'bu həftə/dövrdə nə etdim?', 'son 3 gündə nə oldu?' → `activity_report` "
@@ -121,6 +127,7 @@ class BrainAgent:
         self.tools = ToolRegistry()
         self.tools.register(SaveNoteTool())
         self.tools.register(SearchNotesTool())
+        self.tools.register(GetRelatedNotesTool())
         self.tools.register(CreateReminderTool())
         self.tools.register(CreateTaskTool())
         self.tools.register(SummarizeCategoryTool())
@@ -148,12 +155,13 @@ class BrainAgent:
                 "cache_control": {"type": "ephemeral"},
             }
 
-    def _pick_model(self, user_text: str) -> str:
+    def _pick_model(self, user_text: str, allow_escalation: bool = True) -> str:
         """Sadə mesaj → Haiku (ucuz); analitik/mürəkkəb sual → smart (Sonnet).
 
         Keyfiyyət balansı: escalation yalnız həqiqətən çətin suallarda işə düşür.
+        Aylıq büdcə limiti keçilibsə (allow_escalation=False) həmişə Haiku.
         """
-        if not self.escalation_enabled:
+        if not (self.escalation_enabled and allow_escalation):
             return self.llm.model_fast
         return self.llm.model_smart if is_complex_query(user_text) else self.llm.model_fast
 
@@ -165,6 +173,7 @@ class BrainAgent:
         source: NoteSource,
         embedder: Any,
         history: list[dict[str, str]] | None = None,
+        allow_escalation: bool = True,
     ) -> str:
         ctx = ToolContext(
             session=session,
@@ -184,7 +193,7 @@ class BrainAgent:
         # System = keşlənən statik blok + dinamik cari vaxt bloku (prompt caching).
         system = _system_blocks(self.has_web_search, now_local_prompt())
         # Model seçimi bütün tur üçün bir dəfə (sadə=Haiku, mürəkkəb=Sonnet).
-        model = self._pick_model(user_text)
+        model = self._pick_model(user_text, allow_escalation)
         for _ in range(MAX_TOOL_ROUNDS):
             resp = await self.llm.complete(
                 system=system,

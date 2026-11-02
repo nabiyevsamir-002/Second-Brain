@@ -32,6 +32,25 @@ class Settings(BaseSettings):
     # --- Verilənlər bazası ---
     database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/second_brain"
 
+    # --- AI backend seçimi (Phase 8 — Claude abunəsi, API açarsız) ---
+    # llm_backend: auto | subscription | api
+    #   subscription → Claude Code (Agent SDK) + CLAUDE_CODE_OAUTH_TOKEN (Pro/Max abunəsi)
+    #   api          → Anthropic API (ANTHROPIC_API_KEY, token başına ödəniş)
+    #   auto         → token varsa subscription, yoxsa API açarı varsa api
+    llm_backend: str = "auto"
+    claude_code_oauth_token: str = ""  # `claude setup-token` çıxışı (1 il etibarlı)
+    agent_max_turns: int = 8  # abunə agentinin bir mesajda maksimum addımı
+    llm_timeout_sec: int = 180  # Claude Code CLI ilişib qalmasın
+    # embed_backend / stt_backend: auto | local | openai — auto: OpenAI açarı varsa openai.
+    embed_backend: str = "auto"
+    local_embed_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+    # Əlaqəli qeyd həddi (cosine məsafə). 0 = embedding provayderinin öz dəyəri.
+    related_max_distance: float = 0.0
+    stt_backend: str = "auto"
+    whisper_model: str = "small"  # faster-whisper: base | small | medium | large-v3-turbo
+    whisper_compute_type: str = "int8"
+    model_cache_dir: str = ""  # lokal model faylları; Docker-də /models (volume), boş = default keş
+
     # --- LLM (Phase 1) ---
     anthropic_api_key: str = ""
     # Agent beyni — HƏR mesajda işləyir (əsas xərc). Xərc balansı üçün default Haiku 4.5
@@ -47,6 +66,12 @@ class Settings(BaseSettings):
     # Tək istifadəçi üçün səxavətli limitlər (normal istifadə heç vaxt dəyməz).
     rate_limit_per_min: int = 20
     rate_limit_per_hour: int = 240
+
+    # --- Soft aylıq büdcə (USD, istifadəçi başına; usage_log əsasında) ---
+    # Limitin budget_warn_pct %-ində xəbərdarlıq; keçəndə bot DAYANMIR — yalnız Sonnet
+    # eskalasiyası + səsli cavab ayın sonunadək söndürülür. 0 = söndürülü.
+    monthly_budget_usd: float = 0.0
+    budget_warn_pct: int = 80
 
     # --- OpenAI: Whisper STT + embeddings (Phase 1-2) ---
     openai_api_key: str = ""
@@ -65,6 +90,38 @@ class Settings(BaseSettings):
     # Ping kəsilsə (bot/DB/VPS düşüb) xarici monitor SƏNƏ alert göndərir. Boş = söndürülü.
     healthcheck_url: str = ""
     heartbeat_interval_min: int = 5
+
+    # --- E-poçt (Phase 8) — IMAP, YALNIZ oxuma (məktublar "oxunmuş" olmur) ---
+    # Gmail: imap.gmail.com + 2 addımlı doğrulama + App Password (adi parol işləmir).
+    email_imap_host: str = ""
+    email_imap_port: int = 993
+    email_imap_ssl: bool = True
+    email_address: str = ""
+    email_password: str = ""
+    email_folder: str = "INBOX"
+    email_check_interval_min: int = 10  # yeni məktub bildirişi yoxlaması; 0 = söndürülü
+    email_ai_triage: bool = True  # yeni məktubları Claude ilə vacib/adi ayır (abunə istifadəsi)
+
+    @property
+    def resolved_llm_backend(self) -> str:
+        """subscription | api | none — `auto` açarlara görə həll olunur."""
+        b = self.llm_backend.strip().lower()
+        if b in ("subscription", "api"):
+            return b
+        if self.claude_code_oauth_token:
+            return "subscription"
+        return "api" if self.anthropic_api_key else "none"
+
+    def resolved_backend(self, value: str) -> str:
+        """embed/stt üçün: local | openai — `auto`: OpenAI açarı varsa openai."""
+        b = value.strip().lower()
+        if b in ("local", "openai"):
+            return b
+        return "openai" if self.openai_api_key else "local"
+
+    @property
+    def email_enabled(self) -> bool:
+        return bool(self.email_imap_host and self.email_address and self.email_password)
 
     @property
     def tz(self) -> ZoneInfo:

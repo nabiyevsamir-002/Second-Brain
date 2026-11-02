@@ -28,7 +28,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-EMBEDDING_DIM = 1536  # LOCKED — text-embedding-3-small
+# DB sütun ölçüsü (text-embedding-3-small ilə eyni). Lokal model (768) vektorları
+# sıfırlarla 1536-ya tamamlanır — cosine dəyişmir (providers/embeddings_local.py).
+EMBEDDING_DIM = 1536
 
 
 class Base(DeclarativeBase):
@@ -169,3 +171,12 @@ class UsageLog(Base):
     tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     cost: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, server_default="0")
     created_at: Mapped[datetime] = _created_at()
+
+
+class AppMeta(Base):
+    """Tətbiq səviyyəli açar-dəyər (məs. aktiv embedding modeli — services/reembed.py)."""
+
+    __tablename__ = "app_meta"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)

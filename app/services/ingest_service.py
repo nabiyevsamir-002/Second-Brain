@@ -42,12 +42,16 @@ CHUNK_OVERLAP = 100
 
 
 async def _summarize(llm: Any, content: str) -> dict[str, Any]:
-    resp = await llm.complete(
-        system=SUMMARIZE_SYSTEM,
-        messages=[{"role": "user", "content": content[:MAX_SUMMARY_INPUT]}],
-        model=settings.claude_model_fast,
-        max_tokens=1024,
-    )
+    try:
+        resp = await llm.complete(
+            system=SUMMARIZE_SYSTEM,
+            messages=[{"role": "user", "content": content[:MAX_SUMMARY_INPUT]}],
+            model=settings.claude_model_fast,
+            max_tokens=1024,
+        )
+    except Exception as exc:  # noqa: BLE001 — xülasəsiz də indekslənir (limit/şəbəkə)
+        log.warning("summarize_failed", error=str(exc))
+        return {}
     return _parse_json(llm.text_of(resp))
 
 

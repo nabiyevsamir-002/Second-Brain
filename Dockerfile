@@ -2,7 +2,10 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    MODEL_CACHE_DIR=/models \
+    HF_HOME=/models/hf \
+    PYTHONPATH=/app
 
 WORKDIR /app
 
@@ -20,12 +23,17 @@ RUN apt-get update \
 #    Beləliklə kod dəyişikliyi ağır asılılıq quraşdırmasını yenidən işə salmır (sürətli deploy).
 COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install .
+# Claude Code CLI claude-agent-sdk paketinin içində gəlir (Node lazım deyil) — `claude`
+# əmri kimi əlçatan olsun (token: docker compose run --rm -it bot claude setup-token).
+RUN ln -sf "$(python -c 'import claude_agent_sdk, os; print(os.path.join(os.path.dirname(claude_agent_sdk.__file__), "_bundled", "claude"))')" /usr/local/bin/claude \
+    && claude --version
 
 # 2) Tətbiq kodu + config — burada dəyişiklik yuxarıdakı asılılıq layer-ini POZMUR.
 #    Tətbiq /app-dan mənbə kimi işləyir (`python -m app.main`), pip paketi (boş) shadow etmir.
 COPY alembic.ini ./
 COPY app ./app
 COPY migrations ./migrations
+COPY scripts ./scripts
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
 RUN chmod +x /app/docker/entrypoint.sh
 

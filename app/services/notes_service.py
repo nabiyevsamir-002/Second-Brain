@@ -54,12 +54,16 @@ def _parse_json(text: str) -> dict[str, Any]:
 async def _clean_and_categorize(
     session: AsyncSession, llm: ClaudeLLMProvider, user_id: int, raw_text: str
 ) -> dict[str, Any]:
-    resp = await llm.complete(
-        system=CLEAN_SYSTEM,
-        messages=[{"role": "user", "content": raw_text}],
-        model=settings.claude_model_fast,
-        max_tokens=1024,
-    )
+    try:
+        resp = await llm.complete(
+            system=CLEAN_SYSTEM,
+            messages=[{"role": "user", "content": raw_text}],
+            model=settings.claude_model_fast,
+            max_tokens=1024,
+        )
+    except Exception as exc:  # noqa: BLE001 — limit/şəbəkə: qeyd itməsin, xam saxlanır
+        log.warning("clean_failed_saving_raw", user_id=user_id, error=str(exc))
+        return {}
     meta = _parse_json(llm.text_of(resp))
     try:
         await log_llm_usage(session, user_id, settings.claude_model_fast, resp.usage)
@@ -76,15 +80,19 @@ async def capture_note(
     *,
     llm: ClaudeLLMProvider | None = None,
     embedder: Any | None = None,
+    meta: dict[str, Any] | None = None,
 ) -> Note:
+    """meta (cleaned_text/summary/category/tags) verilibsə — məs. abunə agenti özü
+    doldurub — ayrıca LLM təmizləmə çağırışı atlanır."""
     cleaned_text: str | None = None
     summary: str | None = None
     category: str | None = None
     tags: list[str] = []
     embedding: list[float] | None = None
 
-    if llm is not None:
-        meta = await _clean_and_categorize(session, llm, user_id, raw_text)
+    if not (meta and str(meta.get("cleaned_text") or "").strip()):
+        meta = await _clean_and_categorize(session, llm, user_id, raw_text) if llm else None
+    if meta:
         cleaned_text = (meta.get("cleaned_text") or "").strip() or None
         summary = (meta.get("summary") or "").strip() or None
         category = (meta.get("category") or "").strip() or None

@@ -6,6 +6,12 @@ Bu sənəd layihəni **sıfırdan** öz serverinizə (VPS / şirkət serveri) ye
 
 Spesifikasiya: [CLAUDE.md](CLAUDE.md) · Cari canlı status: [HANDOFF.md](HANDOFF.md).
 
+> **İki AI rejimi (Phase 8):**
+> - **Şəxsi istifadə — Claude abunəsi** (API açarsız, evdəki Linux noutbuk, bir əmr): **[LINUX.md](LINUX.md)**.
+>   Abunə şəxsidir — botu başqa istifadəçilərə xidmət kimi açmaq üçün istifadə olunmamalıdır.
+> - **Şirkət / çox istifadəçi — API açarları:** `.env`-də `LLM_BACKEND=api` + `ANTHROPIC_API_KEY`
+>   (istəyə bağlı `OPENAI_API_KEY`). Aşağıdakı təlimat bu rejim üçündür.
+
 ---
 
 ## 1. Arxitektura (qısa)
@@ -148,7 +154,10 @@ gunzip -c backups/second_brain_YYYYMMDD_HHMMSS.sql.gz | \
 - **Escalation**: yalnız çətin/analitik suallar `CLAUDE_MODEL_SMART` (Sonnet) işlədir;
   sadə mesajlar Haiku qalır. `ESCALATION_ENABLED=false` → həmişə Haiku (ən ucuz).
 - **Rate-limit**: `RATE_LIMIT_PER_MIN/HOUR` runaway xərci məhdudlaşdırır.
-- İstifadəçi `/stats` ilə token/xərci görür (təxmini; qiymətlər `app/pricing.py`).
+- **Soft aylıq büdcə**: `MONTHLY_BUDGET_USD` (istifadəçi başına, 0 = söndürülü). Bu ayın xərci
+  `BUDGET_WARN_PCT` %-ə çatanda bir dəfə xəbərdarlıq; limit keçiləndə bot **dayanmır** — yalnız
+  Sonnet eskalasiyası və səsli cavab ayın sonunadək söndürülür, istifadəçiyə bir dəfə bildirilir.
+- İstifadəçi `/stats` ilə token/xərci və büdcə vəziyyətini görür (təxmini; qiymətlər `app/pricing.py`).
 
 ---
 
@@ -187,7 +196,7 @@ Botda `/health` → DB, providerlər, qeyd/istifadəçi sayı, uptime, monitorin
 Data onsuz da `user_id` üzrə izolyasiyalıdır (hər qeyd/tapşırıq/xatırlatma istifadəçiyə
 bağlı). Çox istifadəçi üçün:
 - `ALLOWED_USER_IDS`-ə bütün icazəli ID-ləri əlavə et.
-- Rate-limit per-user işləyir (hər kəs ayrı limitə malikdir).
+- Rate-limit və aylıq büdcə per-user işləyir (hər kəs ayrı limitə malikdir).
 - Miqyas böyüyəndə: Postgres-ə resurs, embedding/agent çağırışlarına monitoring.
 
 ---

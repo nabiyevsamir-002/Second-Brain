@@ -27,6 +27,10 @@ dependencies = [
     "python-docx>=1.1",                           # DOCX mətn çıxarma
     "azure-cognitiveservices-speech>=1.40",       # az-AZ TTS (səsli cavab, Phase 3)
     "tavily-python>=0.5",                          # web axtarış (agent web_search tool)
+    "claude-agent-sdk>=0.2.176,<0.3",             # Claude abunəsi (Claude Code CLI paketin içində)
+    "fastembed>=0.7,<1",                          # lokal embedding (ONNX, CPU) — API açarsız
+    "faster-whisper>=1.1,<2",                     # lokal STT (CTranslate2, CPU) — API açarsız
+    "av>=11,<19",                                 # PyAV 19 `metadata_errors`-u silib → faster-whisper 1.2 sınır
 ]
 
 [project.optional-dependencies]

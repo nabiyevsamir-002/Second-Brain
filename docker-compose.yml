@@ -34,6 +34,10 @@ services:
       db:
         condition: service_healthy
     # DB host konteyner şəbəkəsində "db"-dir (env_file-dakı DATABASE_URL bununla uyğundur).
+    volumes:
+      # Lokal AI modelləri (embedding ~1GB + Whisper) — bir dəfə endirilir, rebuild-də itmir.
+      - models:/models
 
 volumes:
   pgdata:
+  models:

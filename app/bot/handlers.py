@@ -6,28 +6,36 @@ Mətn/səs → agent niyyəti routing edir (save_note / search_notes) → cavab.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import io
 import os
 import re
 import tempfile
 import time
-from datetime import timedelta
+import traceback
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from anthropic import APIError
 from sqlalchemy import text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import Conflict
 from telegram.ext import ContextTypes
 
 # Proses başlama anı (uptime üçün) — modul importunda = app start.
 _STARTED = time.monotonic()
 
+from app.bot.md import md, md_in, plain_text, split_message
 from app.bot.ratelimit import limiter
 from app.config import settings
 from app.db import SessionLocal
 from app.logging_conf import get_logger
 from app.models import NoteSource, Reminder
 from app.pricing import stt_cost, tts_cost
+from app.providers.errors import LLMUnavailableError, SubscriptionLimitError
 from app.providers.registry import providers
+from app.repositories.links import find_related, related_threshold
 from app.repositories.messages import add_message, count_messages, get_recent_messages
 from app.repositories.notes import (
     all_notes,
@@ -42,9 +50,18 @@ from app.repositories.reminders import create_reminder, list_pending
 from app.repositories.tasks import complete_task, list_open_tasks
 from app.repositories.usage import log_usage, usage_totals
 from app.repositories.users import get_or_create_user, update_settings
+from app.services.budget import (
+    get_budget_status,
+    month_key,
+    notice_text,
+    pending_notice,
+    status_for,
+)
 from app.services.ingest_service import ingest_document, ingest_image, ingest_url
+from app.services.email_watch import short_sender
 from app.services.notes_service import capture_note, recapture_note
 from app.timeutils import fmt_local, now_local, now_utc
+from app.tools.email_tools import MAX_BODY_CHARS
 
 log = get_logger("bot")
 
@@ -63,16 +80,18 @@ HELP = (
     "/list — son qeydlər (☆ sabitlə · 🗑 sil düymələri; /list iş · /list #tag = filtr)\n"
     "/pinned — sabitlənmiş (pin) qeydlər\n"
     "/search <söz> — qeydlərdə axtarış (cat:iş və ya #tag filtr)\n"
+    "/related <id> — qeydlə əlaqəli qeydlər\n"
     "/tasks — açıq tapşırıqlar\n"
     "/done <id> — tapşırığı bağla\n"
     "/remind — gələn xatırlatmalar\n"
-    "/stats — istifadə və xərc\n"
+    "/stats — istifadə, xərc və aylıq büdcə\n"
     "/health — sistem sağlamlığı (DB, providerlər, uptime)\n"
     "/export — qeydləri fayl kimi yüklə\n"
     "/delete <id> — qeydi sil (/delete all = hamısı)\n"
     "/edit <id> <mətn> — qeydi yenilə (yenidən təmizlə+embed)\n"
     "/settings — brifinq ayarları\n"
     "/voice — səsli cavab (aç/söndür, səs seç)\n"
+    "/mail — son məktublar (/mail <uid> oxu · /mail on|off bildiriş)\n"
     "/id — Telegram ID\n\n"
     "*Nə göndərə bilərsən:*\n"
     "• 📝 mətn / 🎙 səs → qeyd, sual, tapşırıq və ya xatırlatma\n"
@@ -80,6 +99,8 @@ HELP = (
     "• 📋 «hesabatı bitirmək tapşırığı əlavə et» → tapşırıq (təkrarlanan da: «hər həftə...»)\n"
     "• 🧾 «iş qeydlərimi xülasə et» → kateqoriyanın icması\n"
     "• 📊 «bu həftə nə etdim?» → fəaliyyət icmalı\n"
+    "• 🧩 «#12 ilə əlaqəli nə var?» → əlaqəli qeydlər\n"
+    "• 📧 «yeni məktublarım var?», «Əlidən gələn məktubu xülasə et» → e-poçt\n"
     "• 🔗 link → səhifə xülasələnib saxlanılır\n"
     "• 📄 PDF / DOCX → mətn indeksləib axtarışa əlavə olunur\n"
     "• 🖼 şəkil / skrinşot → Claude vision oxuyur (OCR) və qeyd yaradır\n"
@@ -116,6 +137,22 @@ def _fmt_uptime(secs: float) -> str:
     return " ".join(parts)
 
 
+def backend_label() -> str:
+    """Aktiv AI backend-lərin qısa təsviri (/health)."""
+    llm = {"subscription": "Claude abunəsi (Claude Code)", "api": "Anthropic API"}.get(
+        settings.resolved_llm_backend, "yoxdur"
+    )
+    embed = getattr(providers.get("embed"), "model_id", "?") if providers.has("embed") else "yox"
+    if not providers.has("stt"):
+        stt = "yox"
+    elif getattr(providers.get("stt"), "local", False):
+        stt = f"lokal Whisper ({settings.whisper_model})"
+    else:
+        stt = "OpenAI Whisper"
+    mail = "qoşulub" if providers.has("email") else "yox"
+    return f"{llm} · embed: {embed} · STT: {stt} · e-poçt: {mail}"
+
+
 async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/health — DB, providerlər, sayğaclar, uptime, monitoring statusu (əl ilə yoxlama)."""
     db_ok = True
@@ -137,11 +174,31 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "🩺 *Sağlamlıq*",
         f"DB: {'✅ qoşulu' if db_ok else '❌ XƏTA'}",
         f"Providerlər: {prov}",
+        md(f"AI: {backend_label()}"),
         f"Qeyd / İstifadəçi: {n_notes} / {n_users}",
         f"Uptime: {_fmt_uptime(time.monotonic() - _STARTED)}",
         f"Monitoring ping: {mon}",
     ]
     await update.message.reply_markdown("\n".join(lines))
+
+
+@contextlib.asynccontextmanager
+async def _keep_typing(update: Update):
+    """Telegram «yazır…» ~5 saniyə yaşayır, abunə agentinin cavabı isə 7-20 saniyə çəkir."""
+
+    async def loop() -> None:
+        while True:
+            with contextlib.suppress(Exception):  # göstərici kritik deyil
+                await update.message.chat.send_action("typing")
+            await asyncio.sleep(4)
+
+    task = asyncio.create_task(loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 async def _rate_ok(update: Update) -> bool:
@@ -153,6 +210,58 @@ async def _rate_ok(update: Update) -> bool:
             "yenidən cəhd et."
         )
     return allowed
+
+
+def _llm_failure_text(exc: Exception) -> str:
+    if isinstance(exc, SubscriptionLimitError):
+        when = ""
+        if exc.resets_at:
+            reset = datetime.fromtimestamp(exc.resets_at, tz=timezone.utc)
+            when = f" — {fmt_local(reset, with_weekday=False)}-də bərpa olunur"
+        return f"⏳ Claude abunə limiti doldu{when}."
+    return f"⚠️ Claude hazırda cavab vermir ({exc})."
+
+
+async def _save_after_llm_failure(session, uid: int, raw_text: str, source, exc) -> str:
+    """AI əlçatmazdır: alətlərin etdiyini saxla; heç bir alət işləməyibsə mesajı xam qeyd et."""
+    note = None
+    try:
+        if not getattr(exc, "tools_ran", None):
+            embedder = providers.get("embed") if providers.has("embed") else None
+            note = await capture_note(session, uid, raw_text, source, embedder=embedder)
+        await session.commit()
+    except Exception as err:  # noqa: BLE001
+        await session.rollback()
+        note = None
+        log.error("raw_save_failed", user_id=uid, error=str(err))
+    log.warning("llm_unavailable", user_id=uid, error=str(exc),
+                limit=isinstance(exc, SubscriptionLimitError))
+    reply = _llm_failure_text(exc)
+    if note is not None:
+        reply += f"\n📝 Mesajın itməsin deyə xam qeyd #{note.id} kimi saxladım."
+    return reply
+
+
+async def _budget_after_reply(uid: int, s: dict, fallback):
+    """Cavabdan SONRA büdcəni yenidən yoxla (bu mesajın xərci də daxil).
+
+    Returns (status, bildiriş | None) — hər hədd (warn/over) ayda bir dəfə bildirilir.
+    Xəta olsa cavabı bloklamır: fallback status qaytarılır.
+    """
+    try:
+        async with SessionLocal() as session:
+            status = await get_budget_status(session, uid)
+            month = month_key()
+            level = pending_notice(status.state, month, s.get("budget_notified"))
+            if level is None:
+                return status, None
+            await update_settings(session, uid, {"budget_notified": f"{month}:{level}"})
+            await session.commit()
+        log.info("budget_notice", user_id=uid, level=level, spent=str(status.spent))
+        return status, notice_text(status)
+    except Exception as exc:  # noqa: BLE001 — büdcə yoxlaması kritik deyil
+        log.warning("budget_check_failed", user_id=uid, error=str(exc))
+        return fallback, None
 
 
 # --- Səsli cavab (Azure az-AZ TTS) ---------------------------------------
@@ -247,15 +356,24 @@ async def _run_agent(
 
     async with SessionLocal() as session:
         db_user = await get_or_create_user(session, user.id, name=user.full_name)
+        # Soft büdcə: limit keçilibsə mesaj Sonnet-ə qalxmır (Haiku qalır).
+        budget = await get_budget_status(session, db_user.telegram_id)
         history = await get_recent_messages(session, db_user.telegram_id, limit=6)
-        reply = await agent.handle(
-            session,
-            db_user.telegram_id,
-            raw_text,
-            source,
-            providers.get("embed"),
-            history,
-        )
+        try:
+            async with _keep_typing(update):
+                reply = plain_text(await agent.handle(
+                    session,
+                    db_user.telegram_id,
+                    raw_text,
+                    source,
+                    providers.get("embed"),
+                    history,
+                    allow_escalation=not budget.degraded,
+                ))
+        except (LLMUnavailableError, APIError) as exc:
+            notice = await _save_after_llm_failure(session, db_user.telegram_id, raw_text, source, exc)
+            await update.message.reply_text(prefix + notice)
+            return
         await add_message(session, db_user.telegram_id, "user", raw_text)
         await add_message(session, db_user.telegram_id, "assistant", reply)
         await session.commit()
@@ -264,11 +382,19 @@ async def _run_agent(
         voice_mirror = bool(s.get("voice_mirror", True))
 
     # Plain text — agent cavabındakı [#id] və s. Markdown-ı pozmasın deyə.
-    await update.message.reply_text(prefix + reply)
+    for part in split_message(prefix + reply):
+        await update.message.reply_text(part)
+
+    # Bu mesajın xərci də daxil: hədd indi keçilibsə səs söndürülür + bir dəfə bildiriş.
+    budget, notice = await _budget_after_reply(user.id, s, budget)
 
     # Səsli cavab: açıqdırsa HƏR mesajda; ya da səslə yazıblarsa (mirror) səslə cavab ver.
-    if voice_on or (voice_mirror and input_is_voice):
+    # Büdcə limiti keçilibsə (soft rejim) səsli cavab getmir.
+    if not budget.degraded and (voice_on or (voice_mirror and input_is_voice)):
         await _speak_reply(update, reply, voice_name)
+
+    if notice:
+        await update.message.reply_text(notice)
 
 
 def _first_url(msg) -> str | None:
@@ -361,9 +487,9 @@ async def document_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"📄 Sənəd emalında xəta: {exc}")
         return
 
-    reply = f"📄 *{filename}* — {len(notes)} hissə indeksləndi."
+    reply = f"📄 {md(filename)} — {len(notes)} hissə indeksləndi."
     if summary:
-        reply += f"\n📝 {summary}"
+        reply += f"\n📝 {md(summary)}"
     await update.message.reply_markdown(reply)
 
 
@@ -445,7 +571,9 @@ async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await get_or_create_user(
                 session, update.effective_user.id, name=update.effective_user.full_name
             )
-            await log_usage(session, update.effective_user.id, "stt", cost=stt_cost(duration))
+            local = getattr(providers.get("stt"), "local", False)  # lokal Whisper — xərcsiz
+            await log_usage(session, update.effective_user.id, "stt",
+                            cost=0 if local else stt_cost(duration))
             await session.commit()
     except Exception:  # noqa: BLE001 — usage logu kritik deyil
         pass
@@ -460,9 +588,9 @@ async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 def _note_line(note) -> str:
     icon = "🎙" if note.source == NoteSource.voice else "📝"
     body = (note.summary or note.cleaned_text or note.raw_text or "")
-    body = body[:70] + ("…" if len(body) > 70 else "")
+    body = md(body[:70] + ("…" if len(body) > 70 else ""))
     pin = "📌 " if note.pinned else ""
-    cat = f" · _{note.category}_" if note.category else ""
+    cat = f" · _{md_in(note.category)}_" if note.category else ""
     return f"{pin}#{note.id} {icon} {body}{cat}"
 
 
@@ -501,7 +629,10 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             flt = f"#{tag}" if tag else category
             await update.message.reply_text(f"📭 '{flt}' üzrə qeyd tapılmadı.")
             return
-        header = f"🗒 *#{tag}* üzrə qeydlər:\n" if tag else f"🗒 *{category}* qeydləri:\n"
+        header = (
+            f"🗒 *#{md_in(tag)}* üzrə qeydlər:\n" if tag
+            else f"🗒 *{md_in(category)}* qeydləri:\n"
+        )
         lines = [header] + [_note_line(n) for n in notes]
         await update.message.reply_markdown("\n".join(lines))
         return
@@ -523,6 +654,32 @@ async def pinned_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
     await update.message.reply_markdown(text, reply_markup=kb)
+
+
+async def related_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/related <id> — qeydlə əlaqəli qeydlər (saxlanmış linklər + vektor qonşuları)."""
+    arg = (context.args[0] if context.args else "").strip().lstrip("#")
+    if not arg.isdigit():
+        await update.message.reply_text("İstifadə: /related <qeyd id> (məs: /related 12)")
+        return
+    note_id = int(arg)
+    uid = update.effective_user.id
+    async with SessionLocal() as session:
+        note = await get_note(session, note_id)
+        if note is None or note.user_id != uid:
+            await update.message.reply_text(f"🤷 #{note_id} nömrəli qeyd tapılmadı.")
+            return
+        embedder = providers.get("embed") if providers.has("embed") else None
+        hits = await find_related(
+            session, uid, note, k=5, max_distance=related_threshold(embedder)
+        )
+
+    if not hits:
+        await update.message.reply_text(f"🧩 #{note_id} üçün əlaqəli qeyd tapılmadı.")
+        return
+    lines = [f"🧩 *#{note_id}* ilə əlaqəli qeydlər:\n"]
+    lines += [f"{_note_line(n)} · {round(score * 100)}%" for n, score in hits]
+    await update.message.reply_markdown("\n".join(lines))
 
 
 def _parse_search_args(args: list[str]) -> tuple[str, str | None, str | None]:
@@ -563,11 +720,11 @@ async def search_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(f"🔎 '{query}'{flt} üzrə nəticə tapılmadı.")
         return
 
-    lines = [f"🔎 *'{query}'* üzrə nəticələr:\n"]
+    lines = [f"🔎 *'{md_in(query)}'* üzrə nəticələr:\n"]
     for note, dist in hits:
         icon = "🎙" if note.source == NoteSource.voice else "📝"
         body = note.summary or note.cleaned_text or note.raw_text
-        body = body[:70] + ("…" if len(body) > 70 else "")
+        body = md(body[:70] + ("…" if len(body) > 70 else ""))
         pct = round(max(0.0, 1.0 - dist) * 100)
         lines.append(f"#{note.id} {icon} {body} · {pct}%")
     await update.message.reply_markdown("\n".join(lines))
@@ -593,7 +750,7 @@ async def tasks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             when = fmt_local(t.due_at, with_weekday=False)
             suffix = f" · ⚠️ gecikib ({when})" if overdue else f" · ⏳ {when}"
         rep = " 🔁" if t.recur else ""
-        lines.append(f"#{t.id} — {t.title}{suffix}{rep}")
+        lines.append(f"#{t.id} — {md(t.title)}{suffix}{rep}")
     lines.append("\n_Bağlamaq üçün:_ /done <id>")
     await update.message.reply_markdown("\n".join(lines))
 
@@ -628,7 +785,7 @@ async def remind_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     lines = ["⏰ *Gələn xatırlatmalar:*\n"]
     for r in pending:
         rep = " 🔁" if r.recur else ""
-        lines.append(f"#{r.id} · {fmt_local(r.remind_at)} — {r.text}{rep}")
+        lines.append(f"#{r.id} · {fmt_local(r.remind_at)} — {md(r.text)}{rep}")
     await update.message.reply_markdown("\n".join(lines))
 
 
@@ -647,6 +804,22 @@ def _sum_tokens(totals: dict) -> int:
 
 def _sum_cost(totals: dict) -> Decimal:
     return sum((cost for _, cost in totals.values()), Decimal("0"))
+
+
+_BUDGET_LABELS = {
+    "ok": "✅ normal",
+    "warn": "⚠️ limitə yaxındır",
+    "over": "🔻 soft rejim (Sonnet + səsli cavab söndürülü)",
+}
+
+
+def _budget_line(status) -> str:
+    if status.state == "off":
+        return "💰 *Aylıq büdcə:* limit yoxdur (`MONTHLY_BUDGET_USD`)"
+    return (
+        f"💰 *Aylıq büdcə:* ~${status.spent:.2f} / ${status.limit:.2f} "
+        f"({status.pct}%) — {_BUDGET_LABELS[status.state]}"
+    )
 
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -670,11 +843,14 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"*Bu ay:* {msgs_month} mesaj · {_sum_tokens(month)} token · "
         f"~${_sum_cost(month):.4f}"
     )
+    lines.append(_budget_line(status_for(_sum_cost(month))))
     if month:
         lines.append("\n_Növ üzrə (bu ay):_")
         for kind, (tok, cost) in sorted(month.items()):
             label = _KIND_LABELS.get(kind, kind)
             lines.append(f"  {label}: {tok} token · ~${cost:.4f}")
+    if settings.resolved_llm_backend == "subscription":
+        lines.append("\n_Abunə rejimi: real ödəniş yoxdur — rəqəmlər API ekvivalentidir._")
     lines.append("\n_Qiymətlər təxminidir._")
     await update.message.reply_markdown("\n".join(lines))
 
@@ -913,6 +1089,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     data = q.data or ""
     uid = update.effective_user.id
 
+    # CallbackQueryHandler-də user filtri yoxdur — allowlist-i burada yoxla.
+    if settings.allowed_ids and uid not in settings.allowed_ids:
+        log.warning("unauthorized_callback", user_id=uid)
+        return
+
     if data == "del:cancel":
         await q.edit_message_text("İmtina edildi.")
         return
@@ -999,6 +1180,85 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             _settings_text(s), parse_mode="Markdown", reply_markup=_settings_keyboard(s)
         )
         return
+
+
+MAIL_NOT_CONFIGURED = (
+    "📭 E-poçt qoşulmayıb. .env-də EMAIL_IMAP_HOST, EMAIL_ADDRESS, EMAIL_PASSWORD doldur "
+    "(Gmail üçün App Password) və botu yenidən başlat."
+)
+
+
+async def mail_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/mail — son məktublar · /mail <uid> — oxu · /mail on|off — yeni məktub bildirişi."""
+    if not providers.has("email"):
+        await update.message.reply_text(MAIL_NOT_CONFIGURED)
+        return
+    uid = update.effective_user.id
+    arg = (context.args[0].strip().lower() if context.args else "")
+
+    if arg in ("on", "off"):
+        async with SessionLocal() as session:
+            await get_or_create_user(session, uid, name=update.effective_user.full_name)
+            await update_settings(session, uid, {"email_notify": arg == "on"})
+            await session.commit()
+        state = "açıldı 🔔" if arg == "on" else "söndürüldü 🔕"
+        await update.message.reply_text(f"📬 Yeni məktub bildirişi {state}.")
+        return
+
+    box = providers.get("email")
+    await update.message.chat.send_action("typing")
+    try:
+        if arg.isdigit():
+            m = await box.get(int(arg))
+            if m is None:
+                await update.message.reply_text(f"🤷 uid={arg} məktub tapılmadı.")
+                return
+            when = fmt_local(m.date, with_weekday=False) if m.date else "?"
+            body = m.body[:MAX_BODY_CHARS // 2] + ("…" if len(m.body) > MAX_BODY_CHARS // 2 else "")
+            await update.message.reply_text(
+                f"📧 {m.subject}\nKimdən: {m.sender}\nTarix: {when}\n\n{body or '(mətn yoxdur)'}"
+            )
+            return
+        mails = await box.recent(limit=10)
+    except Exception as exc:  # noqa: BLE001
+        log.error("mail_cmd_failed", error=str(exc))
+        await update.message.reply_text(f"📭 E-poçta qoşulmaq olmadı: {exc}")
+        return
+
+    if not mails:
+        await update.message.reply_text("📭 Qovluqda məktub yoxdur.")
+        return
+    lines = ["📬 Son məktublar (● = oxunmamış):"]
+    for m in mails:
+        when = fmt_local(m.date, with_weekday=False) if m.date else "?"
+        dot = "● " if m.unread else ""
+        lines.append(f"{dot}{m.uid} · {when} · {short_sender(m.sender)} — {m.subject}")
+    lines.append("\nOxumaq: /mail <uid> · Bildiriş: /mail on | /mail off")
+    lines.append("Sual da verə bilərsən: «Əlidən gələn son məktubu xülasə et».")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Qlobal xəta handler-i — istifadəçi cavabsız qalmasın, səbəb loglansın."""
+    err = context.error
+    if isinstance(err, Conflict):
+        log.error(
+            "telegram_conflict",
+            hint="Eyni TELEGRAM_BOT_TOKEN ilə başqa instans işləyir (VPS? Mac?) — birini dayandır.",
+        )
+        return
+    log.error(
+        "handler_error",
+        error=repr(err),
+        trace="".join(traceback.format_exception(err)) if err else None,
+    )
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ Gözlənilməz xəta baş verdi — bir az sonra yenidən cəhd et."
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
 
 async def unauthorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

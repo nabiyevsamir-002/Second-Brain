@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from telegram import BotCommand
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -15,6 +16,28 @@ from app.config import settings
 from app.logging_conf import get_logger
 
 log = get_logger("bot")
+
+# Telegram "/" menyusu — bot hər başlayanda set_my_commands ilə sinxronlaşır
+# (yeni əmr əlavə olunanda BotFather-də əl ilə yeniləmək lazım deyil).
+BOT_COMMANDS = [
+    BotCommand("list", "Son qeydlər (filtr: /list iş, /list #tag)"),
+    BotCommand("search", "Qeydlərdə axtarış"),
+    BotCommand("related", "Qeydlə əlaqəli qeydlər"),
+    BotCommand("pinned", "Sabitlənmiş qeydlər"),
+    BotCommand("tasks", "Açıq tapşırıqlar"),
+    BotCommand("done", "Tapşırığı bağla"),
+    BotCommand("remind", "Gələn xatırlatmalar"),
+    BotCommand("stats", "İstifadə, xərc və aylıq büdcə"),
+    BotCommand("export", "Qeydləri fayl kimi yüklə"),
+    BotCommand("edit", "Qeydi yenilə"),
+    BotCommand("delete", "Qeydi sil"),
+    BotCommand("settings", "Brifinq ayarları"),
+    BotCommand("voice", "Səsli cavab"),
+    BotCommand("mail", "Son məktublar / bildiriş"),
+    BotCommand("health", "Sistem sağlamlığı"),
+    BotCommand("help", "Kömək"),
+    BotCommand("id", "Telegram ID"),
+]
 
 
 def _register_common(app: Application, user_filter=None) -> None:
@@ -32,6 +55,7 @@ def _register_common(app: Application, user_filter=None) -> None:
     cmd("list", handlers.list_cmd)
     cmd("pinned", handlers.pinned_cmd)
     cmd("search", handlers.search_cmd)
+    cmd("related", handlers.related_cmd)
     cmd("tasks", handlers.tasks_cmd)
     cmd("done", handlers.done_cmd)
     cmd("remind", handlers.remind_cmd)
@@ -42,6 +66,7 @@ def _register_common(app: Application, user_filter=None) -> None:
     cmd("edit", handlers.edit_cmd)
     cmd("settings", handlers.settings_cmd)
     cmd("voice", handlers.voice_cmd)
+    cmd("mail", handlers.mail_cmd)
 
     # Inline düymə callback-ları (/delete təsdiqi, /settings). Düymələr yalnız
     # allowlist istifadəçisinin şəxsi çatında göndərilir.
@@ -68,6 +93,7 @@ def build_application(post_init=None) -> Application:
     if post_init is not None:
         builder = builder.post_init(post_init)
     app = builder.build()
+    app.add_error_handler(handlers.on_error)
 
     allowed = settings.allowed_ids
     if allowed:

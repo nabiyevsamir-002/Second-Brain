@@ -11,9 +11,10 @@ A personal "second brain" on Telegram, built Azerbaijani-first. You send it voic
 - **Ask:** a Claude-powered agent searches your notes and answers from them.
 - **Act:** you can create reminders and tasks in plain language (for example, "remind me to call the doctor tomorrow at 9"). It also sends a daily morning briefing with open tasks, reminders and recent notes.
 - **Manage:** `/stats` shows message, token and estimated cost usage. `/export` downloads all notes as Markdown. `/delete` removes notes, and `/settings` controls the briefing.
-- **Operations:** runs with Docker Compose. Migrations apply automatically on start, PostgreSQL is backed up every night, and GitHub Actions deploys to a VPS on every push.
+- **Email:** reads your inbox over IMAP (read-only), answers questions about mail and notifies you about important new messages.
+- **Operations:** runs with Docker Compose, 24/7 on a home Linux laptop, installed by one command (see `LINUX.md`). Migrations apply automatically on start and PostgreSQL is backed up every night. The VPS deploy workflow is manual-only.
 
-**Stack:** Python 3.11 · python-telegram-bot (async) · Claude API · OpenAI Whisper and embeddings · Azure Speech (az-AZ) · PostgreSQL 16 + pgvector · SQLAlchemy (async) + Alembic · Docker
+**Stack:** Python 3.11 · python-telegram-bot (async) · Claude via the user's Pro/Max subscription (Claude Agent SDK; API mode optional) · local embeddings (fastembed) and speech-to-text (faster-whisper) · Azure Speech (az-AZ, optional) · PostgreSQL 16 + pgvector · SQLAlchemy (async) + Alembic · Docker
 
 **Quick start:** `cp .env.example .env` (set at least `TELEGRAM_BOT_TOKEN`), then `make up`.
 
@@ -26,9 +27,9 @@ A personal "second brain" on Telegram, built Azerbaijani-first. You send it voic
 Şəxsi "ikinci beyin": Telegram üzərindən səsli və mətn qeydlər al, sonra
 təbii dildə bu qeydlərlə söhbət et (RAG semantik axtarış).
 
-> **Status:** Phase 5 — Polish (qeyd/söhbət + RAG + link/PDF/DOCX ingest +
-> xatırlatmalar/tapşırıqlar/brifinq + **cost tracking `/stats`, `/export`,
-> `/delete`, `/settings`**). Canlı işləyir.
+> **Status:** Phase 8 — **Claude abunəsi ilə (API açarsız)**, lokal axtarış + səs tanıma,
+> Gmail oxuma və yeni məktub bildirişi; evdəki Linux noutbukda 24/7, bir əmrlə quraşdırılır → [LINUX.md](LINUX.md).
+> Ətraflı vəziyyət: [HANDOFF.md](HANDOFF.md).
 
 ## Tex Stack
 - Python 3.11+ · python-telegram-bot v21 (async)

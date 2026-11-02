@@ -13,6 +13,8 @@ MODEL = "text-embedding-3-small"
 
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
+    model_id = f"openai:{MODEL}"
+
     def __init__(self, api_key: str) -> None:
         self.client = AsyncOpenAI(api_key=api_key)
         self.last_total_tokens: int = 0

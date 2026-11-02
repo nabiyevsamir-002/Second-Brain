@@ -16,10 +16,12 @@ from sqlalchemy import text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ContextTypes
 
+from app.bot.md import md
 from app.config import settings
 from app.db import SessionLocal
 from app.logging_conf import get_logger
 from app.models import TaskStatus
+from app.providers.registry import providers
 from app.repositories.notes import category_counts_since, count_notes_since
 from app.repositories.reminders import (
     due_reminders,
@@ -28,11 +30,14 @@ from app.repositories.reminders import (
 )
 from app.repositories.tasks import list_open_tasks
 from app.repositories.users import get_user, update_settings
+from app.services.email_watch import check_new_mail
+from app.services.reembed import backfill_embeddings
 from app.timeutils import fmt_local, now_local, now_utc
 
 log = get_logger("scheduler")
 
 REMINDER_INTERVAL_SEC = 60
+REEMBED_INTERVAL_SEC = 60
 BRIEFING_DEFAULT_HOUR = 8  # local (Asia/Baku) — istifadəçi /settings ilə dəyişə bilər
 DIGEST_DEFAULT_WEEKDAY = 0  # Bazar ertəsi (0=Mon … 6=Sun) — həftəlik icmal günü
 
@@ -89,7 +94,7 @@ async def _build_briefing(session, user_id: int) -> str:
 
     user = await get_user(session, user_id)
     name = (user.name.split()[0] if user and user.name else None)
-    greet = f"☀️ Sabahın xeyir, {name}!" if name else "☀️ Sabahın xeyir!"
+    greet = f"☀️ Sabahın xeyir, {md(name)}!" if name else "☀️ Sabahın xeyir!"
     header = f"{greet}\n📅 {fmt_local(local)}\n"
 
     lines = [header]
@@ -103,19 +108,28 @@ async def _build_briefing(session, user_id: int) -> str:
                 overdue = t.due_at <= now and t.status == TaskStatus.open
                 mark = f" · ⚠️ gecikib ({fmt_local(t.due_at, with_weekday=False)})" if overdue \
                     else f" · ⏳ {fmt_local(t.due_at, with_weekday=False)}"
-            lines.append(f"  #{t.id} {t.title}{mark}")
+            lines.append(f"  #{t.id} {md(t.title)}{mark}")
         lines.append("")
 
     todays = await reminders_between(session, user_id, day_start, day_end)
     if todays:
         lines.append("⏰ *Bugünkü xatırlatmalar:*")
         for r in todays:
-            lines.append(f"  • {fmt_local(r.remind_at, with_weekday=False)[11:]} — {r.text}")
+            lines.append(f"  • {fmt_local(r.remind_at, with_weekday=False)[11:]} — {md(r.text)}")
         lines.append("")
 
     n_recent = await count_notes_since(session, user_id, now - timedelta(hours=24))
     if n_recent:
         lines.append(f"🗒 Son 24 saatda {n_recent} qeyd əlavə etdin.")
+
+    # Poçt qutusu sahibinindir (ALLOWED_USER_IDS-in birincisi).
+    if providers.has("email") and settings.allowed_ids and user_id == settings.allowed_ids[0]:
+        try:
+            n_unread = await providers.get("email").unread_count()
+            if n_unread:
+                lines.append(f"📧 Oxunmamış məktub: {n_unread} (/mail)")
+        except Exception as exc:  # noqa: BLE001 — brifinq poçt xətasına görə dayanmasın
+            log.warning("briefing_mail_failed", error=str(exc))
 
     if not tasks and not todays and not n_recent:
         lines.append("Bu gün üçün planlaşdırılmış tapşırıq və ya xatırlatma yoxdur. 📭")
@@ -131,7 +145,7 @@ async def _build_digest(session, user_id: int) -> str:
 
     user = await get_user(session, user_id)
     name = (user.name.split()[0] if user and user.name else None)
-    greet = f"📊 Həftəlik icmal, {name}!" if name else "📊 Həftəlik icmal!"
+    greet = f"📊 Həftəlik icmal, {md(name)}!" if name else "📊 Həftəlik icmal!"
     lines = [greet, f"📅 {fmt_local(local, with_weekday=False)}", ""]
 
     n_notes = await count_notes_since(session, user_id, week_ago)
@@ -139,7 +153,7 @@ async def _build_digest(session, user_id: int) -> str:
 
     cats = await category_counts_since(session, user_id, week_ago)
     if cats:
-        lines.append("🏷 Əsas mövzular: " + ", ".join(f"{c} ({n})" for c, n in cats))
+        lines.append("🏷 Əsas mövzular: " + ", ".join(f"{md(c)} ({n})" for c, n in cats))
 
     open_tasks = await list_open_tasks(session, user_id, limit=100)
     if open_tasks:
@@ -241,6 +255,47 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE) -> None:
         log.warning("heartbeat_ping_fail", error=str(exc))
 
 
+async def email_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Yeni məktubları yoxla, vacib/adi olanları sahibə (ALLOWED_USER_IDS[0]) bildir."""
+    if not providers.has("email") or not settings.allowed_ids:
+        return
+    owner = settings.allowed_ids[0]
+    async with SessionLocal() as session:
+        user = await get_user(session, owner)
+        s = (user.settings if user else {}) or {}
+        if not s.get("email_notify", True):
+            return
+        llm = providers.get("llm") if providers.has("llm") else None
+        try:
+            text, changes = await check_new_mail(providers.get("email"), llm, s)
+        except Exception as exc:  # noqa: BLE001 — şəbəkə/IMAP: növbəti tick-də yenidən
+            log.warning("email_check_failed", error=str(exc))
+            return
+        if text:
+            try:
+                await context.bot.send_message(chat_id=owner, text=text)
+            except Exception as exc:  # noqa: BLE001 — vəziyyəti irəli aparma, sonra təkrar
+                log.warning("email_notify_failed", error=str(exc))
+                return
+            log.info("email_notified", user_id=owner)
+        await update_settings(session, owner, changes)
+        await session.commit()
+
+
+async def reembed_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Embedding-i olmayan qeydləri partiyalarla doldur (model dəyişikliyi / xətadan sonra)."""
+    if not providers.has("embed"):
+        return
+    try:
+        async with SessionLocal() as session:
+            n = await backfill_embeddings(session, providers.get("embed"))
+            if n:
+                await session.commit()
+                log.info("embeddings_backfilled", count=n)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("reembed_failed", error=str(exc))
+
+
 def _secs_to_next_hour() -> int:
     """İndidən növbəti tam saata (:00) qədər saniyə (tick-i saat başına düzləmək üçün)."""
     now = now_local()
@@ -274,10 +329,20 @@ def setup_jobs(application: Application) -> None:
             first=10,
             name="heartbeat",
         )
+    email_on = providers.has("email") and settings.email_check_interval_min > 0
+    if email_on:
+        jq.run_repeating(
+            email_tick,
+            interval=settings.email_check_interval_min * 60,
+            first=30,
+            name="email_tick",
+        )
+    jq.run_repeating(reembed_tick, interval=REEMBED_INTERVAL_SEC, first=20, name="reembed_tick")
     log.info(
         "scheduler_ready",
         reminder_interval_sec=REMINDER_INTERVAL_SEC,
         briefing_default=f"{BRIEFING_DEFAULT_HOUR:02d}:00 {settings.timezone}",
         briefing_check="hourly",
         heartbeat=("on" if settings.healthcheck_url else "off"),
+        email_check=(f"{settings.email_check_interval_min}min" if email_on else "off"),
     )
