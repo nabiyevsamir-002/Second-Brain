@@ -1,4 +1,18 @@
-# HANDOFF — harada qaldıq (son yeniləmə 2026-10-31)
+# HANDOFF — harada qaldıq (son yeniləmə 2026-11-02)
+
+## 🚩 HARADA QALDIQ — buradan davam et (2026-11-02 ~23:30 Bakı)
+
+**🟢 Bot canlıdır:** `@Personal_AI_Asisstant_bot`, JobRadar-ın Linux noutbukunda (`ssh jobradar-linux`, `~/SecondBrain`), yalnız Claude
+abunəsi ilə. İlk real mesaj 23:23-də ~7 saniyəyə emal olundu. Baza təmiz başlayıb (Samir-in seçimi).
+
+**Samir təsdiqlədi:** bot cavab verir (Telegram-da görüb). **Köhnə qeydlər lazım deyil:** droplet silinir, VPS-dən köçürmə ləğv olunub.
+
+**Açıq iş:** e-poçt — Samir Gmail App Password yaradır, sonra `bash scripts/linux/deploy-from-mac.sh --email`. Vəziyyəti `doctor.py` göstərir.
+
+**Gündəlik:** yeniləmə `bash scripts/linux/deploy-from-mac.sh` · yoxlama `ssh jobradar-linux 'cd ~/SecondBrain && docker compose exec bot python scripts/doctor.py'`
+· ətraflı [LINUX.md](LINUX.md).
+**Qaydalar:** JobRadar production-dur, ona toxunma · Mac-da botu işə salma (token canlı botundur) · Samir-in yapışdıracağı əmrlərdə `||` yox, bir sətir.
+**Yoxlanmayıb:** noutbukun real reboot-u, ilk gecə backup-ı (03:15).
 
 Layihə spesifikasiyası: **[CLAUDE.md](CLAUDE.md)**. Bu fayl **hazırkı canlı vəziyyəti**
 və **növbəti addımı** saxlayır.
@@ -67,7 +81,7 @@ Samir seçdi, hamısı lokal smoke test + fresh/existing migration + real image 
 
 Yeni agent alətləri: `summarize_category`, `activity_report` (cəmi 6+web_search). Yeni əmr: `/pinned`.
 
-## 🧩 Phase 7 — Spec boşluqları (2026-10-31, lokal test olunub — HƏLƏ commit/deploy YOX)
+## 🧩 Phase 7 — Spec boşluqları (2026-10-31, commit c244577)
 
 Audit: ilkin spesifikasiyada olub qurulmayan hissələr bağlandı. **Migration yoxdur.**
 - **🧩 Əlaqəli qeydlər** — `note_links` yazılırdı, amma heç yerdə oxunmurdu. İndi:
@@ -89,13 +103,14 @@ Audit: ilkin spesifikasiyada olub qurulmayan hissələr bağlandı. **Migration 
 
 **Qeyd:** abunə rejimində (Phase 8) büdcə default söndürülüdür (`MONTHLY_BUDGET_USD=0`) — real ödəniş yoxdur.
 
-## 🐧 Phase 8.1 — Linux noutbukda bir əmrlə quraşdırma (🟢 CANLI 2026-11-02 23:11 Bakı, commit YOX)
+## 🐧 Phase 8.1 — Linux noutbukda bir əmrlə quraşdırma (🟢 CANLI 2026-11-02 23:11 Bakı)
 
 **Canlı vəziyyət (quraşdırmadan dərhal sonra oxunub):** `@Personal_AI_Asisstant_bot` noutbukda, konflikt 0, xəta 0, RAM 2.2/5 GB;
 real konteynerdə real tokenlə Claude cavab verdi; JobRadar aktiv, sıfır restart. **Baza təmiz başladı (0 qeyd):** Samir
 «Təmiz başlasın» seçdi, çünki VPS-ə SSH alınmadı (port 22 açıq, amma `id_ed25519` və `gh_actions` ikisi də açmadı; səbəb
 dəqiq bilinmir). **Köhnə qeydlər yalnız droplet-dədir** — silinsə itir, sonradan avtomatik birləşmir. **E-poçt qoşulmayıb**
-(Gmail sualı boş buraxıldı): `bash scripts/linux/deploy-from-mac.sh --email`. Real Telegram mesajı hələ müşahidə olunmayıb.
+(Gmail sualı boş buraxıldı): `bash scripts/linux/deploy-from-mac.sh --email`. İlk real mesaj 23:23-də emal olundu (~7 s, xəta yox);
+ondan əvvəlki mesajlardan loqda iz yoxdur, səbəbi dəqiq bilinmir (ehtimal: başqa çat və ya 23:14/23:16 yenidən başlamaları).
 Quraşdırma real noutbukda ~12 dəqiqə çəkdi.
 
 **Samir-in qərarı:** 4 GB-lıq Windows laptop rədd edildi; bot **JobRadar-ın işlədiyi Linux noutbukda** işləyəcək.
@@ -130,7 +145,7 @@ qayıtdı); etibarsız Claude tokeni → VPS-ə toxunmadan dayandı; real pollin
 yeniləmə 38 s, sıfır sual, VPS-ə toxunmur; **reboot → girişsiz özü qalxır**; backup; `--email`; loqlarda 0 token. 97 pytest.
 **Hələ yoxlanmayıb:** VPS-dən köçürmə real serverdə (giriş alınmadı), real Gmail App Password.
 
-## 🖥️ Phase 8 — Claude abunəsi + Windows PC 24/7 + e-poçt (2026-10-31, lokal test — commit/push YOX)
+## 🖥️ Phase 8 — Claude abunəsi + Windows PC 24/7 + e-poçt (2026-10-31, commit c244577)
 
 Samir-in tələbi: **API açarı yox, yalnız Claude aylıq abunəsi**; evdəki köhnə Windows PC 24/7 (Mac hibrid);
 e-poçt oxumaq. Addım-addım quraşdırma: **[WINDOWS.md](WINDOWS.md)**. Migration: **0005** (`app_meta`, additiv).
