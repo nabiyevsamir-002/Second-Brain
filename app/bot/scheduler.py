@@ -1,8 +1,9 @@
 """Proaktiv scheduler (Phase 4) — PTB JobQueue əsasında.
 
-İki iş:
+Əsas işlər:
   • deliver_due_reminders — hər 60 san: vaxtı çatmış xatırlatmaları çatdırır.
-  • morning_briefing — hər gün səhər: günün tapşırıq/xatırlatma/qeyd icmalı.
+  • briefing_tick — saatbaşı: səhər brifinqi, həftəlik icmal və axşam yekunu
+    (bu gün bitənlər, sabah, poçt təmizliyi düyməsi, gündəlik sualı).
 
 Gecə pg_dump backup host cron ilə işləyir (scripts/backup.sh) — burada deyil.
 """
@@ -28,9 +29,10 @@ from app.repositories.reminders import (
     reminders_between,
     reschedule_or_mark_sent,
 )
-from app.repositories.tasks import list_open_tasks
+from app.repositories.tasks import list_completed_between, list_open_tasks
 from app.repositories.users import get_user, update_settings
-from app.services.email_watch import check_new_mail
+from app.services.email_watch import check_new_mail, is_mail_owner
+from app.services.journal import EVENING_HEADER
 from app.services.reembed import backfill_embeddings
 from app.timeutils import fmt_local, now_local, now_utc
 
@@ -40,6 +42,7 @@ REMINDER_INTERVAL_SEC = 60
 REEMBED_INTERVAL_SEC = 60
 BRIEFING_DEFAULT_HOUR = 8  # local (Asia/Baku) — istifadəçi /settings ilə dəyişə bilər
 DIGEST_DEFAULT_WEEKDAY = 0  # Bazar ertəsi (0=Mon … 6=Sun) — həftəlik icmal günü
+EVENING_DEFAULT_HOUR = 22  # axşam yekunu (Asia/Baku)
 
 
 def _reminder_keyboard(reminder_id: int) -> InlineKeyboardMarkup:
@@ -123,7 +126,7 @@ async def _build_briefing(session, user_id: int) -> str:
         lines.append(f"🗒 Son 24 saatda {n_recent} qeyd əlavə etdin.")
 
     # Poçt qutusu sahibinindir (ALLOWED_USER_IDS-in birincisi).
-    if providers.has("email") and settings.allowed_ids and user_id == settings.allowed_ids[0]:
+    if providers.has("email") and is_mail_owner(user_id):
         try:
             n_unread = await providers.get("email").unread_count()
             if n_unread:
@@ -169,6 +172,57 @@ async def _build_digest(session, user_id: int) -> str:
     return "\n".join(lines).strip()
 
 
+async def _promo_count(user_id: int) -> int:
+    """Inbox-dakı reklam məktubları (yalnız poçt sahibi üçün; xəta → 0, yekun dayanmasın)."""
+    if not (providers.has("email") and is_mail_owner(user_id)):
+        return 0
+    try:
+        return await providers.get("email").promotions_count()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("evening_mail_failed", error=str(exc))
+        return 0
+
+
+async def _build_evening(session, user_id: int) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Axşam yekunu. Cavab (Reply) gündəlik qeydi olur — handlers EVENING_HEADER-ə baxır."""
+    local = now_local()
+    day_start, day_end = _local_day_bounds(local)
+    now = now_utc()
+    lines = [f"{EVENING_HEADER}\n📅 {fmt_local(local)}\n"]
+
+    done = await list_completed_between(session, user_id, day_start, day_end)
+    if done:
+        lines.append("✅ *Bu gün bitirdin:*")
+        lines += [f"  #{t.id} {md(t.title)}" for t in done]
+        lines.append("")
+
+    open_tasks = await list_open_tasks(session, user_id, limit=100)
+    if open_tasks:
+        overdue = sum(1 for t in open_tasks if t.due_at is not None and t.due_at <= now)
+        late = f" ({overdue}-i gecikib)" if overdue else ""
+        lines += [f"📋 Açıq qalır: {len(open_tasks)} tapşırıq{late} — /tasks", ""]
+
+    tomorrow = await reminders_between(session, user_id, day_end, day_end + timedelta(days=1))
+    if tomorrow:
+        lines.append("⏰ *Sabah:*")
+        for r in tomorrow:
+            lines.append(f"  • {fmt_local(r.remind_at, with_weekday=False)[11:]} — {md(r.text)}")
+        lines.append("")
+
+    keyboard = None
+    n_promo = await _promo_count(user_id)
+    if n_promo:
+        lines += [f"🧹 Inbox-da {n_promo} reklam məktubu var.", ""]
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🧹 Bax və təmizlə", callback_data="mc:show")]]
+        )
+
+    lines.append(
+        "📝 Bu gün necə keçdi? Bu mesaja cavab ver (yazı və ya səs) — gündəliyinə yazacağam."
+    )
+    return "\n".join(lines).strip(), keyboard
+
+
 async def _maybe_send_briefing(context, session, uid, s, local, today) -> None:
     if not s.get("briefing_enabled", True):
         return
@@ -205,11 +259,30 @@ async def _maybe_send_digest(context, session, uid, s, local) -> None:
         log.warning("digest_failed", user_id=uid, error=str(exc))
 
 
+async def _maybe_send_evening(context, session, uid, s, local, today) -> None:
+    if not s.get("evening_enabled", True):
+        return
+    if int(s.get("evening_hour", EVENING_DEFAULT_HOUR)) != local.hour:
+        return
+    if s.get("evening_last_sent") == today:
+        return  # bu gün artıq göndərilib
+    try:
+        text, keyboard = await _build_evening(session, uid)
+        await context.bot.send_message(
+            chat_id=uid, text=text, parse_mode="Markdown", reply_markup=keyboard
+        )
+        await update_settings(session, uid, {"evening_last_sent": today})
+        log.info("evening_sent", user_id=uid, hour=local.hour)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("evening_failed", user_id=uid, error=str(exc))
+
+
 async def briefing_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Saatbaşı: səhər brifinqi (gündəlik) + həftəlik digest yoxlaması.
+    """Saatbaşı: səhər brifinqi (gündəlik) + həftəlik digest + axşam yekunu yoxlaması.
 
     Per-user settings: briefing_enabled (default True), briefing_hour (default 8),
-    digest_enabled (default False, opt-in), digest_weekday (default 0=B.e.).
+    digest_enabled (default False, opt-in), digest_weekday (default 0=B.e.),
+    evening_enabled (default True), evening_hour (default 22).
     Təkrarın qarşısını almaq üçün son göndərilmə açarları saxlanılır.
     """
     recipients = settings.allowed_ids
@@ -224,6 +297,7 @@ async def briefing_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             s = (user.settings if user else {}) or {}
             await _maybe_send_briefing(context, session, uid, s, local, today)
             await _maybe_send_digest(context, session, uid, s, local)
+            await _maybe_send_evening(context, session, uid, s, local, today)
         await session.commit()
 
 

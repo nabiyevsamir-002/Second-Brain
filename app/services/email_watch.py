@@ -33,6 +33,11 @@ def short_sender(sender: str) -> str:
     return sender.split("<", 1)[0].strip().strip('"') or sender
 
 
+def is_mail_owner(user_id: int) -> bool:
+    """Poçt qutusu ALLOWED_USER_IDS-in birincisinindir (allowlist boşdursa heç kimin)."""
+    return bool(settings.allowed_ids) and user_id == settings.allowed_ids[0]
+
+
 async def triage(llm: Any, mails: list[Any]) -> dict[int, tuple[str, str]]:
     """uid → (importance, summary). LLM xətasında boş (bildiriş xülasəsiz gedir)."""
     payload = "\n\n".join(

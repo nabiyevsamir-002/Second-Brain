@@ -102,6 +102,24 @@ async def complete_task(session: AsyncSession, user_id: int, task_id: int) -> Ta
     return task
 
 
+async def list_completed_between(
+    session: AsyncSession, user_id: int, start: datetime, end: datetime, limit: int = 10
+) -> list[Task]:
+    """[start, end) aralığında tamamlanan tapşırıqlar (axşam yekunu üçün)."""
+    result = await session.execute(
+        select(Task)
+        .where(
+            Task.user_id == user_id,
+            Task.status == TaskStatus.done,
+            Task.completed_at >= start,
+            Task.completed_at < end,
+        )
+        .order_by(Task.completed_at.asc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
 async def count_tasks_completed_since(
     session: AsyncSession, user_id: int, since: datetime
 ) -> int:

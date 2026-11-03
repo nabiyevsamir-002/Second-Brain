@@ -58,7 +58,8 @@ from app.services.budget import (
     status_for,
 )
 from app.services.ingest_service import ingest_document, ingest_image, ingest_url
-from app.services.email_watch import short_sender
+from app.services.email_watch import is_mail_owner, short_sender
+from app.services.journal import is_journal_reply, save_journal
 from app.services.notes_service import capture_note, recapture_note
 from app.timeutils import fmt_local, now_local, now_utc
 from app.tools.email_tools import MAX_BODY_CHARS
@@ -89,9 +90,10 @@ HELP = (
     "/export — qeydləri fayl kimi yüklə\n"
     "/delete <id> — qeydi sil (/delete all = hamısı)\n"
     "/edit <id> <mətn> — qeydi yenilə (yenidən təmizlə+embed)\n"
-    "/settings — brifinq ayarları\n"
+    "/settings — brifinq və axşam yekunu ayarları\n"
     "/voice — səsli cavab (aç/söndür, səs seç)\n"
     "/mail — son məktublar (/mail <uid> oxu · /mail on|off bildiriş)\n"
+    "/mail təmizlə — reklam məktublarını düymə ilə arxivlə (heç nə silinmir)\n"
     "/id — Telegram ID\n\n"
     "*Nə göndərə bilərsən:*\n"
     "• 📝 mətn / 🎙 səs → qeyd, sual, tapşırıq və ya xatırlatma\n"
@@ -99,6 +101,7 @@ HELP = (
     "• 📋 «hesabatı bitirmək tapşırığı əlavə et» → tapşırıq (təkrarlanan da: «hər həftə...»)\n"
     "• 🧾 «iş qeydlərimi xülasə et» → kateqoriyanın icması\n"
     "• 📊 «bu həftə nə etdim?» → fəaliyyət icmalı\n"
+    "• 🌙 22:00-dakı axşam yekununa cavab ver (Reply) → gündəlik qeydi\n"
     "• 🧩 «#12 ilə əlaqəli nə var?» → əlaqəli qeydlər\n"
     "• 📧 «yeni məktublarım var?», «Əlidən gələn məktubu xülasə et» → e-poçt\n"
     "• 🔗 link → səhifə xülasələnib saxlanılır\n"
@@ -435,10 +438,27 @@ async def _ingest_url_and_reply(update: Update, url: str) -> None:
     await update.message.reply_text(reply)
 
 
+async def _save_journal_reply(
+    update: Update, text: str, source: NoteSource, prefix: str = ""
+) -> None:
+    """Axşam yekununa cavab → «gündəlik» qeydi (agentsiz, Claude-suz)."""
+    user = update.effective_user
+    embedder = providers.get("embed") if providers.has("embed") else None
+    async with SessionLocal() as session:
+        db_user = await get_or_create_user(session, user.id, name=user.full_name)
+        note = await save_journal(session, db_user.telegram_id, text, source, embedder)
+        await session.commit()
+    log.info("journal_saved", note_id=note.id, user_id=user.id)
+    await update.message.reply_text(f"{prefix}📝 Gündəliyə yazdım — qeyd #{note.id}.")
+
+
 async def note_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _rate_ok(update):
         return
     msg = update.message
+    if is_journal_reply(msg, context.bot.id):
+        await _save_journal_reply(update, msg.text, NoteSource.text)
+        return
     url = _first_url(msg)
     if url:
         await _ingest_url_and_reply(update, url)
@@ -579,6 +599,11 @@ async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         pass
 
     log.info("voice_transcribed", user_id=update.effective_user.id, chars=len(transcript))
+    if is_journal_reply(update.message, context.bot.id):
+        await _save_journal_reply(
+            update, transcript, NoteSource.voice, prefix=f"🎙 _{transcript}_\n\n"
+        )
+        return
     await _run_agent(
         update, transcript, NoteSource.voice,
         prefix=f"🎙 _{transcript}_\n\n", input_is_voice=True,
@@ -978,11 +1003,14 @@ def _settings_text(s: dict) -> str:
     hour = int(s.get("briefing_hour", 8))
     status = "açıq 🔔" if enabled else "bağlı 🔕"
     digest = "açıq 📊" if s.get("digest_enabled", False) else "bağlı 🔕"
+    evening = "açıq 🌙" if s.get("evening_enabled", True) else "bağlı 🔕"
+    evening_hour = int(s.get("evening_hour", 22))
     return (
         "⚙️ *Ayarlar*\n\n"
         f"Səhər brifinqi: *{status}*\n"
         f"Saat: *{hour:02d}:00* (Asia/Baku)\n"
-        f"Həftəlik icmal (B.e.): *{digest}*\n\n"
+        f"Həftəlik icmal (B.e.): *{digest}*\n"
+        f"Axşam yekunu ({evening_hour:02d}:00): *{evening}*\n\n"
         "Dəyişmək üçün düymələrdən istifadə et:"
     )
 
@@ -993,9 +1021,13 @@ def _settings_keyboard(s: dict) -> InlineKeyboardMarkup:
     digest_on = s.get("digest_enabled", False)
     toggle = "🔕 Brifinqi söndür" if enabled else "🔔 Brifinqi aç"
     digest_btn = "🔕 Həftəlik icmalı söndür" if digest_on else "📊 Həftəlik icmalı aç"
+    evening_btn = (
+        "🔕 Axşam yekununu söndür" if s.get("evening_enabled", True) else "🌙 Axşam yekununu aç"
+    )
     rows = [
         [InlineKeyboardButton(toggle, callback_data="set:toggle")],
         [InlineKeyboardButton(digest_btn, callback_data="set:digest")],
+        [InlineKeyboardButton(evening_btn, callback_data="set:evening")],
     ]
     hours = [6, 7, 8, 9, 10, 21]
     btns = [
@@ -1098,6 +1130,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await q.edit_message_text("İmtina edildi.")
         return
 
+    if data.startswith("mc:"):
+        await _on_cleanup_callback(q, context, uid, data.split(":"))
+        return
+
     if data.startswith("rem:"):
         parts = data.split(":")
         action = parts[1]
@@ -1172,6 +1208,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 s["briefing_enabled"] = not s.get("briefing_enabled", True)
             elif parts[1] == "digest":
                 s["digest_enabled"] = not s.get("digest_enabled", False)
+            elif parts[1] == "evening":
+                s["evening_enabled"] = not s.get("evening_enabled", True)
             elif parts[1] == "hour":
                 s["briefing_hour"] = int(parts[2])
             s = await update_settings(session, uid, s)
@@ -1186,15 +1224,124 @@ MAIL_NOT_CONFIGURED = (
     "📭 E-poçt qoşulmayıb. .env-də EMAIL_IMAP_HOST, EMAIL_ADDRESS, EMAIL_PASSWORD doldur "
     "(Gmail üçün App Password) və botu yenidən başlat."
 )
+CLEANUP_SAMPLE = 10  # təmizlik siyahısında göstərilən son reklam məktubları
+
+
+def _cleanup_text(total: int, sample) -> str:
+    lines = [f"🧹 Inbox-da {total} reklam məktubu var (Gmail-in «Reklamlar» bölməsi).", ""]
+    if total > len(sample):
+        lines.append(f"Son {len(sample)} məktub:")
+    for m in sample:
+        subject = m.subject if len(m.subject) <= 70 else m.subject[:69] + "…"
+        lines.append(f"• {short_sender(m.sender)} — {subject}")
+    lines += [
+        "",
+        "«Hamısını arxivlə» onları yalnız Inbox-dan çıxarır: məktublar Gmail-də qalır, "
+        "heç nə silinmir. Ulduzlu məktublara toxunulmur.",
+    ]
+    return "\n".join(lines)
+
+
+async def _send_cleanup(bot, uid: int) -> None:
+    """Reklam məktublarının siyahısı + «Hamısını arxivlə» (/mail təmizlə, axşam yekunu)."""
+    if not providers.has("email"):
+        await bot.send_message(uid, MAIL_NOT_CONFIGURED)
+        return
+    if not is_mail_owner(uid):
+        await bot.send_message(uid, "🔒 Poçt təmizliyi yalnız poçt qutusunun sahibi üçündür.")
+        return
+    try:
+        ids, sample = await providers.get("email").promotions(limit=CLEANUP_SAMPLE)
+    except Exception as exc:  # noqa: BLE001
+        log.error("mail_cleanup_list_failed", error=str(exc))
+        await bot.send_message(uid, f"📭 Reklam məktublarını almaq olmadı: {exc}")
+        return
+    if not ids:
+        await bot.send_message(uid, "✨ Inbox-da reklam məktubu yoxdur.")
+        return
+    # Düymə bu siyahıya bağlıdır: köhnə mesajın düyməsi yeni siyahını arxivləməsin.
+    key = now_utc().strftime("%m%d%H%M%S")
+    async with SessionLocal() as session:
+        await get_or_create_user(session, uid)
+        batch = {"key": key, "ids": ids, "archived": []}
+        await update_settings(session, uid, {"mail_cleanup": batch})
+        await session.commit()
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"📦 Hamısını arxivlə ({len(ids)})", callback_data=f"mc:arch:{key}"),
+        InlineKeyboardButton("İmtina", callback_data="mc:cancel"),
+    ]])
+    await bot.send_message(uid, _cleanup_text(len(ids), sample), reply_markup=keyboard)
+
+
+async def _on_cleanup_callback(q, context, uid: int, parts: list[str]) -> None:
+    """mc:show · mc:cancel · mc:arch:<key> · mc:undo:<key> — poçt təmizliyi düymələri."""
+    action = parts[1] if len(parts) > 1 else ""
+    if action == "show":
+        await _send_cleanup(context.bot, uid)
+        return
+    if action == "cancel":
+        await q.edit_message_text("İmtina edildi — məktublara toxunulmadı.")
+        return
+    if action not in ("arch", "undo") or not (providers.has("email") and is_mail_owner(uid)):
+        return
+    key = parts[2] if len(parts) > 2 else ""
+    async with SessionLocal() as session:
+        user = await get_or_create_user(session, uid)
+        batch = dict((user.settings or {}).get("mail_cleanup") or {})
+    if not key or batch.get("key") != key:
+        await q.edit_message_text("⌛ Bu siyahı köhnəlib. Yenisi üçün: /mail təmizlə")
+        return
+    ids = batch.get("ids" if action == "arch" else "archived") or []
+    if not ids:
+        state = "arxivlənib" if action == "arch" else "Inbox-a qaytarılıb"
+        await q.edit_message_text(f"Bu siyahı artıq {state}.")
+        return
+
+    box = providers.get("email")
+    await q.edit_message_text("⏳ Arxivləyirəm…" if action == "arch" else "⏳ Inbox-a qaytarıram…")
+    try:
+        if action == "arch":
+            archived = await box.archive(ids)
+            batch.update(ids=[], archived=archived)
+        else:
+            restored = await box.unarchive(ids)
+            batch.update(archived=[])
+    except Exception as exc:  # noqa: BLE001 — siyahı dəyişmir, sonra yenidən cəhd etmək olar
+        log.error("mail_cleanup_failed", action=action, error=str(exc))
+        await q.edit_message_text(f"⚠️ Alınmadı: {exc}\nBir az sonra /mail təmizlə ilə yoxla.")
+        return
+    async with SessionLocal() as session:
+        await update_settings(session, uid, {"mail_cleanup": batch})
+        await session.commit()
+
+    if action == "undo":
+        log.info("mail_unarchived", count=restored)
+        await q.edit_message_text(f"↩️ {restored} məktub Inbox-a qaytarıldı.")
+    elif not archived:
+        await q.edit_message_text("🤷 Bu məktublar artıq Inbox-da deyil, toxunulacaq heç nə yoxdur.")
+    else:
+        log.info("mail_archived", count=len(archived))
+        await q.edit_message_text(
+            f"📦 {len(archived)} məktub arxivləndi: Inbox-dan çıxdı, Gmail-də qalır.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("↩️ Geri qaytar", callback_data=f"mc:undo:{key}")]]
+            ),
+        )
 
 
 async def mail_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/mail — son məktublar · /mail <uid> — oxu · /mail on|off — yeni məktub bildirişi."""
+    """/mail — son məktublar · /mail <uid> — oxu · /mail on|off — yeni məktub bildirişi ·
+    /mail təmizlə — reklam məktublarını düymə ilə arxivlə."""
     if not providers.has("email"):
         await update.message.reply_text(MAIL_NOT_CONFIGURED)
         return
     uid = update.effective_user.id
     arg = (context.args[0].strip().lower() if context.args else "")
+
+    if arg in ("təmizlə", "temizle", "clean"):
+        await update.message.chat.send_action("typing")
+        await _send_cleanup(context.bot, uid)
+        return
 
     if arg in ("on", "off"):
         async with SessionLocal() as session:

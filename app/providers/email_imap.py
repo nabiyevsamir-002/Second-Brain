@@ -1,6 +1,8 @@
-"""IMAP e-poçt oxuyucu — YALNIZ oxuma (Gmail, Outlook, Yandex, Mail.ru ...).
+"""IMAP e-poçt oxuyucu (Gmail, Outlook, Yandex, Mail.ru ...) + Gmail-də düymə ilə arxiv.
 
-• Qovluq readonly seçilir və BODY.PEEK işlədilir → məktublar "oxunmuş" olmur.
+• Oxuyanda qovluq readonly seçilir və BODY.PEEK işlədilir → məktublar "oxunmuş" olmur.
+• Yeganə yazma — poçt təmizliyi (yalnız Gmail, yalnız istifadəçi düyməni basanda):
+  arxiv = Inbox etiketini götürmək, geri qaytarma = etiketi qaytarmaq. Heç nə silinmir.
 • Gmail: 2 addımlı doğrulama + App Password (adi Google parolu IMAP-da işləmir).
 • imaplib sinxrondur → asyncio.to_thread; hər əməliyyat qısa ömürlü bağlantı açır.
 """
@@ -30,6 +32,11 @@ MAX_NEW = 10  # bir yoxlamada bildirilən maksimum yeni məktub
 _UID_RE = re.compile(rb"UID (\d+)")
 _FLAGS_RE = re.compile(rb"FLAGS \(([^)]*)\)")
 _SIZE_RE = re.compile(rb"RFC822\.SIZE (\d+)")
+_MSGID_RE = re.compile(rb"X-GM-MSGID (\d+)")
+_LIST_RE = re.compile(rb'\((?P<flags>[^)]*)\) (?:"[^"]*"|NIL) (?P<name>.+)$')
+# Poçt təmizliyi: siyahını Gmail-in öz «Reklamlar» bölməsi verir (Claude yox), ulduzlulara toxunma.
+PROMO_QUERY = "category:promotions -is:starred"
+MAX_CLEANUP = 500  # bir dəfədə arxivlənən maksimum məktub
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
@@ -195,6 +202,66 @@ class ImapMailProvider:
                 log.warning("mail_parse_failed", uid=uid, error=str(exc))
         return sorted(mails, key=lambda x: x.uid, reverse=True)
 
+    @staticmethod
+    def _msgids(conn: imaplib.IMAP4, uids: list[int]) -> dict[int, int]:
+        """UID → Gmail X-GM-MSGID (qovluqdan asılı olmayan sabit id)."""
+        if not uids:
+            return {}
+        _, data = conn.uid("FETCH", ",".join(str(u) for u in uids), "(X-GM-MSGID)")
+        out: dict[int, int] = {}
+        for line in data or []:
+            line = line[0] if isinstance(line, tuple) else line
+            u, g = _UID_RE.search(line or b""), _MSGID_RE.search(line or b"")
+            if u and g:
+                out[int(u.group(1))] = int(g.group(1))
+        return out
+
+    @staticmethod
+    def _all_mail_folder(conn: imaplib.IMAP4) -> str:
+        """Gmail «All Mail» qovluğu — adı hesabın dilinə görə dəyişir, \\All bayrağı ilə tapılır."""
+        _, data = conn.list()
+        for line in data or []:
+            m = _LIST_RE.match(line) if isinstance(line, bytes) else None
+            if m and b"\\All" in m.group("flags").split():
+                return m.group("name").decode()
+        raise RuntimeError("Gmail «All Mail» qovluğu tapılmadı")
+
+    @classmethod
+    def _uids_by_msgid(cls, conn: imaplib.IMAP4, msgids: list[int]) -> list[int]:
+        """Seçilmiş qovluqda X-GM-MSGID-lərin UID-ləri (50-lik OR axtarışları ilə)."""
+        uids: list[int] = []
+        for i in range(0, len(msgids), 50):
+            chunk = msgids[i : i + 50]
+            criteria = ["OR"] * (len(chunk) - 1)
+            for mid in chunk:
+                criteria += ["X-GM-MSGID", str(mid)]
+            uids += cls._uids(conn, *criteria)
+        return uids
+
+    def _set_inbox_label(self, conn: imaplib.IMAP4, msgids: list[int], *, add: bool) -> int:
+        """Inbox etiketini «All Mail»-da götür/qoy → dəyişən məktubların sayı.
+
+        Inbox-un özündə Gmail bu STORE-a OK qaytarır, amma etiket yerində qalır (real
+        poçtda yoxlanıb) — ona görə yazma həmişə «All Mail» qovluğunda gedir.
+        """
+        typ, _ = conn.select(self._all_mail_folder(conn), readonly=False)
+        if typ != "OK":
+            raise RuntimeError("Gmail «All Mail» qovluğu açılmadı")
+        uids = self._uids_by_msgid(conn, msgids)
+        if uids:
+            typ, _ = conn.uid(
+                "STORE", ",".join(str(u) for u in uids),
+                "+X-GM-LABELS" if add else "-X-GM-LABELS", "(\\Inbox)",
+            )
+            if typ != "OK":
+                raise RuntimeError("Gmail etiketi dəyişmədi")
+        return len(uids)
+
+    def _promo_uids(self, conn: imaplib.IMAP4) -> list[int]:
+        if self.folder.upper() != "INBOX":  # arxiv = Inbox etiketini götürmək
+            raise RuntimeError("Poçt təmizliyi yalnız INBOX qovluğu ilə işləyir")
+        return self._uids(conn, "X-GM-RAW", _quote(PROMO_QUERY))
+
     def _run(self, fn):
         conn = self._connect()
         try:
@@ -244,6 +311,45 @@ class ImapMailProvider:
 
     async def unread_count(self) -> int:
         return await asyncio.to_thread(self._run, lambda conn: len(self._uids(conn, "UNSEEN")))
+
+    # --- poçt təmizliyi (Gmail) ------------------------------------------
+    async def promotions_count(self) -> int:
+        """Inbox-dakı ulduzsuz reklam məktublarının sayı."""
+        return await asyncio.to_thread(self._run, lambda conn: len(self._promo_uids(conn)))
+
+    async def promotions(self, limit: int = 10) -> tuple[list[int], list[Mail]]:
+        """(namizədlərin X-GM-MSGID-ləri — ən çox MAX_CLEANUP, ən yeni `limit` məktub)."""
+
+        def work(conn):
+            uids = self._promo_uids(conn)[-MAX_CLEANUP:]
+            ids = self._msgids(conn, uids)
+            return [ids[u] for u in reversed(uids) if u in ids], self._fetch(conn, uids[-limit:])
+
+        return await asyncio.to_thread(self._run, work)
+
+    async def archive(self, msgids: list[int]) -> list[int]:
+        """Seçilmiş reklam məktublarını arxivlə (Inbox etiketini götür) → arxivlənənlərin id-si.
+
+        Yalnız hələ Inbox-da olan ulduzsuz reklam məktublarına toxunur: arada ulduz qoyulubsa
+        və ya məktub başqa bölməyə keçibsə, yerində qalır.
+        """
+        wanted = set(msgids)
+
+        def work(conn):
+            uids = self._promo_uids(conn)
+            ids = self._msgids(conn, uids)
+            hit = [ids[u] for u in uids if ids.get(u) in wanted]
+            if hit:
+                self._set_inbox_label(conn, hit, add=False)
+            return hit
+
+        return await asyncio.to_thread(self._run, work)
+
+    async def unarchive(self, msgids: list[int]) -> int:
+        """Arxivlənmiş məktubları Inbox-a qaytar (etiketi geri qoy) → qaytarılanların sayı."""
+        return await asyncio.to_thread(
+            self._run, lambda conn: self._set_inbox_label(conn, msgids, add=True)
+        )
 
     async def poll_new(
         self, last_uid: int | None, uidvalidity: int | None
