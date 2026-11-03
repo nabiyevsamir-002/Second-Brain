@@ -1,6 +1,6 @@
 # HANDOFF — harada qaldıq (son yeniləmə 2026-11-03)
 
-## 🚩 HARADA QALDIQ — buradan davam et (2026-11-03 ~14:30 Bakı)
+## 🚩 HARADA QALDIQ — buradan davam et (2026-11-03 ~23:50 Bakı)
 
 **🟢 Bot canlıdır:** `@Personal_AI_Asisstant_bot`, JobRadar-ın Linux noutbukunda (`ssh jobradar-linux`, `~/SecondBrain`), yalnız Claude
 abunəsi ilə. İlk real mesaj 23:23-də ~7 saniyəyə emal olundu. Baza təmiz başlayıb (Samir-in seçimi).
@@ -15,6 +15,17 @@ qurmuşdu. İndi 00:00–05:00 arası «sabah» həmin günün səhəri sayılı
 (`⏰ Xatırlatma #N: 2026-11-04 09:00 (Çərşənbə)`), çünki model tarixi öz sözləri ilə yazanda həftə gününü səhv salırdı. Noutbukda real Claude ilə,
 saatı simulyasiya edib yoxlandı (gecə və gündüz), bazaya yazmadan.
 
+**🌙 Phase 9 — gündəlik rutin (2026-11-03, canlıdır, commit 571ca95):**
+- **Axşam yekunu** hər gün 22:00-da (`/settings`-də aç/söndür): bu gün bitən tapşırıqlar, açıq qalanlar (gecikənlərin sayı), sabahkı
+  xatırlatmalar, Inbox-dakı reklam sayı + «🧹 Bax və təmizlə» düyməsi, «Bu gün necə keçdi?» sualı. Bu mesaja Reply (yazı və ya səs) →
+  «gündəlik» kateqoriyalı qeyd, agentsiz və Claude-suz (`app/services/journal.py`). Mesajı kod yığır, Claude çağırılmır.
+- **Poçt təmizliyi** `/mail təmizlə` və ya düymə: Gmail-in öz «Reklamlar» bölməsi (`category:promotions -is:starred`), son 10-u göstərilir,
+  «📦 Hamısını arxivlə» → «↩️ Geri qaytar». Arxiv = Inbox etiketini götürmək, heç nə silinmir. **Vacib:** Gmail Inbox etiketini Inbox-un
+  özündən götürəndə STORE-a OK qaytarır, amma heç nə dəyişmir (real poçtda görüldü) — ona görə yazma «All Mail» qovluğunda gedir
+  (`\All` bayrağı ilə tapılır). «Yeniliklər» (Updates) bölməsinə toxunulmur: bank, qəbz, iş cavabları ola bilər.
+- **Yoxlandı:** 129 pytest; real Gmail-də 1 reklam məktubu arxivləndi (Inbox-da reklam 44 → 43) və geri qaytarıldı (→ 44, məktub
+  Inbox-da); Gmail `OR` + `X-GM-MSGID` axtarışı yalnız oxuyaraq yoxlandı; test axşam yekunu 23:33-də düymə ilə Samir-ə göndərildi; loqda 0 xəta.
+
 **Açıq iş:** (1) Telegram-da `/mail` və «yeni məktublarım var?» testi (Samir); (2) droplet-i silmək (DigitalOcean → Destroy, Samir edir).
 
 **Kiçik nasazlıq (düzəldilməyib):** `deploy-from-mac.sh` doctor ❌ versə də sonda «Hazırdır» yazır; doctor başlığındakı «e-poçt: qoşulub» yalnız ayarın
@@ -24,7 +35,8 @@ olması deməkdir, real giriş nəticəsi `E-poçt` sətrindədir.
 · ətraflı [LINUX.md](LINUX.md).
 **Qaydalar:** JobRadar production-dur, ona toxunma · Mac-da botu işə salma (token canlı botundur) · Samir-in yapışdıracağı əmrlərdə `||` yox, bir sətir.
 **Yoxlanmayıb:** noutbukun real reboot-u, ilk gecə backup-ı (03:15), real yeni məktub bildirişi, Linux-da real xatırlatma çatdırılması
-(ilki 2026-11-04 09:00).
+(ilki 2026-11-04 09:00), saat 22:00-da avtomatik gedən ilk axşam yekunu (2026-11-04), Telegram-da «Bax və təmizlə» →
+«Hamısını arxivlə» düymələri, Samir-in Reply → gündəlik qeydi.
 
 Layihə spesifikasiyası: **[CLAUDE.md](CLAUDE.md)**. Bu fayl **hazırkı canlı vəziyyəti**
 və **növbəti addımı** saxlayır.

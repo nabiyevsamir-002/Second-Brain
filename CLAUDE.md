@@ -35,7 +35,9 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
   alətləri SÖNDÜRÜLÜB (e-poçt/veb məzmunu etibarsızdır — prompt injection).
 - Tool OLMAYANLAR (handler səviyyəsində, çünki fayl/audio agentə çatmır): link → `ingest_url`
   (fetch+xülasə), PDF/DOCX → `ingest_document`, şəkil → `ingest_image` (vision), səsli cavab →
-  `/voice` setting (Azure TTS).
+  `/voice` setting (Azure TTS), axşam yekununa Reply → `save_journal` («gündəlik» qeydi, Claude-suz).
+- Poçt təmizliyi LLM-siz: siyahını Gmail-in öz «Reklamlar» bölməsi verir (`category:promotions`),
+  məktub mətni heç bir əməliyyatı tetikləyə bilməz; arxiv yalnız düymə ilə, heç nə silinmir.
 
 ## Tex Stack
 - Python 3.11+ (konteynerdə 3.12), python-telegram-bot v21 (async)
@@ -45,9 +47,10 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
 - Embedding: lokal `paraphrase-multilingual-mpnet-base-v2` (768 → 1536-ya sıfırla tamamlanır, DB sütunu
   dəyişməyib). OpenAI `text-embedding-3-small` yalnız açar verilərsə. Model dəyişəndə avtomatik re-embed.
 - Web search: abunədə Claude daxili WebSearch; API rejimində Tavily
-- E-poçt: IMAP (yalnız oxuma, Gmail App Password)
+- E-poçt: IMAP (oxuma, Gmail App Password); yeganə yazma — `/mail təmizlə`: Gmail Inbox etiketi
+  (X-GM-LABELS) götürülür/qaytarılır = arxiv / geri qaytar
 - PDF/DOCX: pypdf + python-docx
-- Scheduler: PTB JobQueue (reminders çatdırılması + səhər brifinqi) — ✅ Phase 4
+- Scheduler: PTB JobQueue (reminders çatdırılması + səhər brifinqi + axşam yekunu 22:00) — ✅ Phase 4/9
 - DB: SQLAlchemy (async) + Alembic; struktur log (structlog); config: pydantic-settings
 
 ## Data model (Alembic 0001→0005; `app_meta(key, value)` — aktiv embedding modeli)
@@ -64,6 +67,7 @@ source ENUM[voice,text,forward,pdf,docx,photo], embedding vector(1536), pinned, 
 `/start` `/help` `/list` `/pinned` `/search` `/related` `/id` `/tasks` `/done` `/remind`
 `/stats` `/health` `/export` `/delete` `/edit` `/settings` `/voice` (Azure `az-AZ`, istəyə bağlı) `/mail`
 `/list iş`·`/list #tag`·`/search <söz> cat:iş #tag` (filtr) · `/list`-də ☆/🗑 düymələr · `/voice mirror`
+· `/mail təmizlə` (reklamlar → 📦 arxiv / ↩️ geri qaytar)
 
 ## Təhlükəsizlik
 - Allowlist — yalnız Samir-in telegram_id (`ALLOWED_USER_IDS`).
@@ -92,6 +96,9 @@ source ENUM[voice,text,forward,pdf,docx,photo], embedding vector(1536), pinned, 
   e-poçt + bildiriş, Windows skriptləri, VPS auto-deploy söndürüldü) — migration 0005 (`app_meta`)
 - **Phase 8.1 — Linux bir əmrlə** ✅ lokal e2e (`scripts/linux/deploy-from-mac.sh`, `install.sh`, `docker-compose.host.yml`,
   `scripts/doctor.py`, canlı Claude 12/12) — 🟢 real noutbukda CANLI (2026-11-02); e-poçt 🟢 qoşulub (Gmail, 2026-11-02)
+- **Phase 9 — Gündəlik rutin** (2026-11-03): axşam yekunu 22:00 (bu gün bitənlər, açıq işlər, sabahkı
+  xatırlatmalar, `/settings`-də aç/söndür) + Reply → «gündəlik» qeydi; poçt təmizliyi `/mail təmizlə`
+  (Gmail «Reklamlar», ulduzlulara toxunmur, düymə ilə arxiv + geri qaytar) — migration yoxdur
 
 ## Metodologiya
 1. Hər fazadan əvvəl qısa plan təsdiqi.
