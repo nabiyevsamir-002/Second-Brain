@@ -7,25 +7,37 @@ import pytest
 
 from app.bot import handlers
 from app.config import settings
-from app.providers.email_imap import PROMO_QUERY, ImapMailProvider, Mail, _quote
+from app.providers.email_imap import (
+    CLEANUP_QUERY,
+    PROMO_QUERY,
+    ImapMailProvider,
+    Mail,
+    _quote,
+)
 from app.providers.registry import providers
 from app.services.email_watch import is_mail_owner
 
 ALL_MAIL = '"[Gmail]/Butun mektublar"'  # adı dilə görə dəyişir, \All bayrağı ilə tapılır
+TRASH = '"[Gmail]/Zibil"'
 LIST_REPLY = [
     b'(\\HasNoChildren) "/" "INBOX"',
     b'(\\All \\HasNoChildren) "/" ' + ALL_MAIL.encode(),
-    b'(\\HasNoChildren \\Trash) "/" "[Gmail]/Trash"',
+    b'(\\HasNoChildren \\Trash) "/" ' + TRASH.encode(),
 ]
 
 
 class FakeConn:
-    """imaplib.IMAP4 əvəzi — əmrləri yazır. inbox / all_mail: uid → X-GM-MSGID."""
+    """imaplib.IMAP4 əvəzi — əmrləri yazır. inbox / all_mail / trash: uid → X-GM-MSGID."""
 
-    def __init__(self, inbox=None, all_mail=None):
-        self.inbox, self.all_mail = inbox or {}, all_mail or {}
+    def __init__(self, inbox=None, all_mail=None, trash=None):
+        self.inbox, self.all_mail, self.trash = inbox or {}, all_mail or {}, trash or {}
         self.folder = "INBOX"
         self.calls: list[tuple] = []
+
+    def _mailbox(self, name: str) -> dict:
+        return {"INBOX": self.inbox, '"INBOX"': self.inbox, TRASH: self.trash}.get(
+            name, self.all_mail
+        )
 
     def select(self, name, readonly=False):
         self.folder = name
@@ -40,7 +52,12 @@ class FakeConn:
 
     def uid(self, cmd, *args):
         self.calls.append((cmd, *args))
-        box = self.inbox if self.folder == "INBOX" else self.all_mail
+        box = self._mailbox(self.folder)
+        if cmd == "MOVE":
+            dest = self._mailbox(args[1])
+            for u in (int(x) for x in args[0].split(",")):
+                dest[1000 + u] = box.pop(u)  # təyinat qovluğunda yeni UID
+            return "OK", []
         if cmd == "SEARCH" and args[0] == "X-GM-RAW":
             return "OK", [" ".join(str(u) for u in sorted(box)).encode()]
         if cmd == "SEARCH":  # [OR ...] X-GM-MSGID <id> ...
@@ -84,6 +101,42 @@ def test_unarchive_finds_all_mail_by_flag_and_restores_inbox_label(monkeypatch):
     assert asyncio.run(_box(monkeypatch, conn).unarchive([111, 333])) == 2
     assert ("SELECT", ALL_MAIL, False) in conn.calls
     assert _stores(conn) == [("STORE", "50,51", "+X-GM-LABELS", "(\\Inbox)")]
+
+
+def _moves(conn: FakeConn) -> list[tuple]:
+    return [c for c in conn.calls if c[0] == "MOVE"]
+
+
+def test_trash_moves_only_requested_candidates_to_trash(monkeypatch):
+    conn = FakeConn(inbox={10: 111, 11: 222, 12: 333})
+    assert asyncio.run(_box(monkeypatch, conn).trash([111, 333, 999])) == [111, 333]
+    assert ("SELECT", '"INBOX"', False) in conn.calls
+    assert ("SEARCH", "X-GM-RAW", _quote(CLEANUP_QUERY)) in conn.calls  # «Əsas» və ulduzlu yox
+    assert _moves(conn) == [("MOVE", "10,12", TRASH)]
+    assert conn.inbox == {11: 222} and sorted(conn.trash.values()) == [111, 333]
+
+
+def test_untrash_moves_mail_back_to_inbox(monkeypatch):
+    conn = FakeConn(trash={70: 111, 71: 333, 72: 777})
+    assert asyncio.run(_box(monkeypatch, conn).untrash([111, 333])) == 2
+    assert ("SELECT", TRASH, False) in conn.calls
+    assert _moves(conn) == [("MOVE", "70,71", '"INBOX"')]
+    assert conn.trash == {72: 777}
+
+
+def test_cleanup_candidates_skip_kept_and_come_newest_first(monkeypatch):
+    conn = FakeConn(inbox={10: 111, 11: 222, 12: 333, 13: 444})
+    box = _box(monkeypatch, conn)
+
+    def fake_fetch(_conn, uids, full=False):
+        return [Mail(uid=u, sender="X", subject="S", date=None, unread=True)
+                for u in sorted(uids, reverse=True)]
+
+    monkeypatch.setattr(ImapMailProvider, "_fetch", staticmethod(fake_fetch))
+    out = asyncio.run(box.cleanup_candidates(exclude={333}, limit=2))
+    assert [mid for mid, _ in out] == [444, 222]
+    assert ("SEARCH", "X-GM-RAW", _quote(CLEANUP_QUERY)) in conn.calls
+    assert not any(c[0] in ("SELECT", "STORE", "MOVE") for c in conn.calls)  # yalnız oxuma
 
 
 def test_msgid_lookup_uses_chunked_or_searches():

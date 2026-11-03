@@ -27,7 +27,7 @@ def day(monkeypatch):
         "done": [_task(3, "Hesabat")],
         "open": [_task(5, "Kitab oxu", NOW - timedelta(days=1)), _task(6, "Məktub yaz")],
         "tomorrow": [SimpleNamespace(remind_at=NOW + timedelta(hours=11), text="Həkimə zəng et")],
-        "promo": 44,
+        "proposal": {"key": "K1", "items": [{"id": 111}, {"id": 222}]},
     }
 
     async def completed(session, uid, start, end, limit=10):
@@ -41,15 +41,15 @@ def day(monkeypatch):
         assert start == NOW.replace(hour=0) + timedelta(days=1)  # sabahın 00:00-ı
         return data["tomorrow"]
 
-    async def promo(uid):
-        return data["promo"]
+    async def review_mail(session, uid):
+        return data["proposal"]
 
     monkeypatch.setattr(scheduler, "now_local", lambda: NOW)
     monkeypatch.setattr(scheduler, "now_utc", lambda: NOW.astimezone(timezone.utc))
     monkeypatch.setattr(scheduler, "list_completed_between", completed)
     monkeypatch.setattr(scheduler, "list_open_tasks", open_tasks)
     monkeypatch.setattr(scheduler, "reminders_between", reminders)
-    monkeypatch.setattr(scheduler, "_promo_count", promo)
+    monkeypatch.setattr(scheduler, "_review_mail", review_mail)
     return data
 
 
@@ -59,15 +59,16 @@ def test_evening_lists_the_day_tomorrow_and_mail_then_asks_about_the_day(day):
     assert "#3 Hesabat" in text
     assert "Açıq qalır: 2 tapşırıq (1-i gecikib)" in text
     assert "09:00 — Həkimə zəng et" in text
-    assert "Inbox-da 44 reklam" in text
-    assert kb.inline_keyboard[0][0].callback_data == "mc:show"
+    assert "Lazımsız görünən 2 məktub tapdım" in text
+    assert kb.inline_keyboard[0][0].callback_data == "mt:show:K1"
     assert text.endswith("gündəliyinə yazacağam.")
 
 
-def test_evening_without_promotions_has_no_button(day):
-    day["promo"] = 0
+@pytest.mark.parametrize("proposal", [None, {"key": "K1", "items": []}])
+def test_evening_without_unnecessary_mail_has_no_button(day, proposal):
+    day["proposal"] = proposal
     text, kb = asyncio.run(scheduler._build_evening(None, 1))
-    assert kb is None and "reklam" not in text
+    assert kb is None and "Lazımsız" not in text
 
 
 class FakeBot:

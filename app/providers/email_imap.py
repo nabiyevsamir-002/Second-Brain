@@ -1,8 +1,9 @@
 """IMAP e-poçt oxuyucu (Gmail, Outlook, Yandex, Mail.ru ...) + Gmail-də düymə ilə arxiv.
 
 • Oxuyanda qovluq readonly seçilir və BODY.PEEK işlədilir → məktublar "oxunmuş" olmur.
-• Yeganə yazma — poçt təmizliyi (yalnız Gmail, yalnız istifadəçi düyməni basanda):
-  arxiv = Inbox etiketini götürmək, geri qaytarma = etiketi qaytarmaq. Heç nə silinmir.
+• Yazma yalnız poçt təmizliyində (yalnız Gmail, yalnız istifadəçi düyməni basanda):
+  arxiv = Inbox etiketini götürmək; silmə = Zibil qutusuna köçürmək (Gmail 30 gün saxlayır).
+  Hər ikisi geri qaytarılır; birdəfəlik silmə (expunge) yoxdur.
 • Gmail: 2 addımlı doğrulama + App Password (adi Google parolu IMAP-da işləmir).
 • imaplib sinxrondur → asyncio.to_thread; hər əməliyyat qısa ömürlü bağlantı açır.
 """
@@ -36,6 +37,8 @@ _MSGID_RE = re.compile(rb"X-GM-MSGID (\d+)")
 _LIST_RE = re.compile(rb'\((?P<flags>[^)]*)\) (?:"[^"]*"|NIL) (?P<name>.+)$')
 # Poçt təmizliyi: siyahını Gmail-in öz «Reklamlar» bölməsi verir (Claude yox), ulduzlulara toxunma.
 PROMO_QUERY = "category:promotions -is:starred"
+# Silmə namizədləri: «Əsas» (şəxsi) bölmə və ulduzlu məktublar heç vaxt təklif olunmur.
+CLEANUP_QUERY = "-category:primary -is:starred"
 MAX_CLEANUP = 500  # bir dəfədə arxivlənən maksimum məktub
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -217,14 +220,20 @@ class ImapMailProvider:
         return out
 
     @staticmethod
-    def _all_mail_folder(conn: imaplib.IMAP4) -> str:
-        """Gmail «All Mail» qovluğu — adı hesabın dilinə görə dəyişir, \\All bayrağı ilə tapılır."""
+    def _special_folder(conn: imaplib.IMAP4, flag: bytes) -> str:
+        """Gmail xüsusi qovluğu (\\All, \\Trash): adı dilə görə dəyişir, bayraqla tapılır."""
         _, data = conn.list()
         for line in data or []:
             m = _LIST_RE.match(line) if isinstance(line, bytes) else None
-            if m and b"\\All" in m.group("flags").split():
+            if m and flag in m.group("flags").split():
                 return m.group("name").decode()
-        raise RuntimeError("Gmail «All Mail» qovluğu tapılmadı")
+        raise RuntimeError(f"Gmail qovluğu tapılmadı: {flag.decode()}")
+
+    @staticmethod
+    def _move(conn: imaplib.IMAP4, uids: list[int], folder: str) -> None:
+        typ, _ = conn.uid("MOVE", ",".join(str(u) for u in uids), folder)
+        if typ != "OK":
+            raise RuntimeError("məktublar köçürülmədi")
 
     @classmethod
     def _uids_by_msgid(cls, conn: imaplib.IMAP4, msgids: list[int]) -> list[int]:
@@ -244,7 +253,7 @@ class ImapMailProvider:
         Inbox-un özündə Gmail bu STORE-a OK qaytarır, amma etiket yerində qalır (real
         poçtda yoxlanıb) — ona görə yazma həmişə «All Mail» qovluğunda gedir.
         """
-        typ, _ = conn.select(self._all_mail_folder(conn), readonly=False)
+        typ, _ = conn.select(self._special_folder(conn, b"\\All"), readonly=False)
         if typ != "OK":
             raise RuntimeError("Gmail «All Mail» qovluğu açılmadı")
         uids = self._uids_by_msgid(conn, msgids)
@@ -257,10 +266,10 @@ class ImapMailProvider:
                 raise RuntimeError("Gmail etiketi dəyişmədi")
         return len(uids)
 
-    def _promo_uids(self, conn: imaplib.IMAP4) -> list[int]:
-        if self.folder.upper() != "INBOX":  # arxiv = Inbox etiketini götürmək
+    def _search_inbox(self, conn: imaplib.IMAP4, query: str) -> list[int]:
+        if self.folder.upper() != "INBOX":  # arxiv/silmə Inbox-dan çıxarmaq deməkdir
             raise RuntimeError("Poçt təmizliyi yalnız INBOX qovluğu ilə işləyir")
-        return self._uids(conn, "X-GM-RAW", _quote(PROMO_QUERY))
+        return self._uids(conn, "X-GM-RAW", _quote(query))
 
     def _run(self, fn):
         conn = self._connect()
@@ -313,15 +322,11 @@ class ImapMailProvider:
         return await asyncio.to_thread(self._run, lambda conn: len(self._uids(conn, "UNSEEN")))
 
     # --- poçt təmizliyi (Gmail) ------------------------------------------
-    async def promotions_count(self) -> int:
-        """Inbox-dakı ulduzsuz reklam məktublarının sayı."""
-        return await asyncio.to_thread(self._run, lambda conn: len(self._promo_uids(conn)))
-
     async def promotions(self, limit: int = 10) -> tuple[list[int], list[Mail]]:
         """(namizədlərin X-GM-MSGID-ləri — ən çox MAX_CLEANUP, ən yeni `limit` məktub)."""
 
         def work(conn):
-            uids = self._promo_uids(conn)[-MAX_CLEANUP:]
+            uids = self._search_inbox(conn, PROMO_QUERY)[-MAX_CLEANUP:]
             ids = self._msgids(conn, uids)
             return [ids[u] for u in reversed(uids) if u in ids], self._fetch(conn, uids[-limit:])
 
@@ -336,7 +341,7 @@ class ImapMailProvider:
         wanted = set(msgids)
 
         def work(conn):
-            uids = self._promo_uids(conn)
+            uids = self._search_inbox(conn, PROMO_QUERY)
             ids = self._msgids(conn, uids)
             hit = [ids[u] for u in uids if ids.get(u) in wanted]
             if hit:
@@ -350,6 +355,54 @@ class ImapMailProvider:
         return await asyncio.to_thread(
             self._run, lambda conn: self._set_inbox_label(conn, msgids, add=True)
         )
+
+    async def cleanup_candidates(
+        self, exclude: set[int], limit: int = 25
+    ) -> list[tuple[int, Mail]]:
+        """Silmə namizədləri (CLEANUP_QUERY): ən yeni `limit` məktub, `exclude` id-ləri xaric."""
+
+        def work(conn):
+            uids = self._search_inbox(conn, CLEANUP_QUERY)
+            ids = self._msgids(conn, uids)
+            fresh = [u for u in reversed(uids) if u in ids and ids[u] not in exclude][:limit]
+            return [(ids[m.uid], m) for m in self._fetch(conn, fresh)]
+
+        return await asyncio.to_thread(self._run, work)
+
+    async def trash(self, msgids: list[int]) -> list[int]:
+        """Məktubları Zibil qutusuna köçür (Gmail 30 gün saxlayır) → köçənlərin id-si.
+
+        Yalnız hələ Inbox-da olan, ulduzsuz və «Əsas»dan kənar məktublara toxunur: arada
+        ulduz qoyulubsa və ya məktub «Əsas»a keçibsə, yerində qalır.
+        """
+        wanted = set(msgids)
+
+        def work(conn):
+            typ, _ = conn.select(_quote(self.folder), readonly=False)
+            if typ != "OK":
+                raise RuntimeError(f"qovluq yazma üçün açılmadı: {self.folder}")
+            uids = self._search_inbox(conn, CLEANUP_QUERY)
+            ids = self._msgids(conn, uids)
+            hit = [u for u in uids if ids.get(u) in wanted]
+            if hit:
+                self._move(conn, hit, self._special_folder(conn, b"\\Trash"))
+            return [ids[u] for u in hit]
+
+        return await asyncio.to_thread(self._run, work)
+
+    async def untrash(self, msgids: list[int]) -> int:
+        """Zibil qutusundakı məktubları Inbox-a qaytar → qaytarılanların sayı."""
+
+        def work(conn):
+            typ, _ = conn.select(self._special_folder(conn, b"\\Trash"), readonly=False)
+            if typ != "OK":
+                raise RuntimeError("Gmail Zibil qutusu açılmadı")
+            uids = self._uids_by_msgid(conn, msgids)
+            if uids:
+                self._move(conn, uids, _quote(self.folder))
+            return len(uids)
+
+        return await asyncio.to_thread(self._run, work)
 
     async def poll_new(
         self, last_uid: int | None, uidvalidity: int | None

@@ -1,7 +1,8 @@
-"""E-poçt alətləri (yalnız oxuma) — check_email, search_email, read_email.
+"""E-poçt alətləri — check_email, search_email, read_email, find_unnecessary_emails.
 
 Məzmun ETİBARSIZ məlumat kimi işarələnir (prompt injection-a qarşı): agent məktubdakı
-göstərişlərə əməl etmir, yalnız istifadəçinin sualına cavab verir.
+göstərişlərə əməl etmir, yalnız istifadəçinin sualına cavab verir. Agentin məktub silən
+aləti YOXDUR: find_unnecessary_emails yalnız siyahı hazırlayır, silməni istifadəçi düymə ilə edir.
 """
 
 from __future__ import annotations
@@ -9,6 +10,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.providers.registry import providers
+from app.services.email_watch import is_mail_owner
+from app.services.mail_review import build_proposal
 from app.timeutils import fmt_local
 from app.tools.base import Tool, ToolContext
 
@@ -117,5 +120,33 @@ class ReadEmailTool(Tool):
         return f"{UNTRUSTED}\n{mail_line(m, snippet=0)}\n\n{body or '(mətn yoxdur)'}"
 
 
+class FindUnnecessaryEmailsTool(Tool):
+    name = "find_unnecessary_emails"
+    description = (
+        "İstifadəçi lazımsız məktubları silmək / poçtu təmizləmək istəyəndə çağır. Inbox-dakı "
+        "namizədlərə (reklam, bildiriş, bülleten; şəxsi və ulduzlu yox) baxır, lazımsızları "
+        "səbəbi ilə seçir və siyahını təsdiq düymələri ilə istifadəçiyə AYRICA mesajda göndərir. "
+        "Özü heç nə silmir."
+    )
+    input_schema: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+
+    async def run(self, ctx: ToolContext, **_: Any) -> str:
+        box = _mailbox()
+        if box is None:
+            return "E-poçt qoşulmayıb."
+        if not is_mail_owner(ctx.user_id):
+            return "Bu poçt qutusu başqa istifadəçinindir."
+        llm = providers.get("llm") if providers.has("llm") else ctx.llm
+        p = await build_proposal(ctx.session, ctx.user_id, box, llm, deliver=True)
+        if not p["items"]:
+            return f"{p['reviewed']} məktuba baxıldı, lazımsız məktub tapılmadı."
+        return (
+            f"{p['reviewed']} məktuba baxıldı, {len(p['items'])} lazımsız məktub tapıldı. "
+            "Siyahı səbəbləri və təsdiq düymələri ilə istifadəçiyə ayrıca mesajda gedir — "
+            "siyahını təkrar yazma. Məktubları sən silə bilməzsən: istifadəçiyə qısa de ki, "
+            "siyahını yoxlayıb 🗑 düyməsini bassın."
+        )
+
+
 def email_tools() -> list[Tool]:
-    return [CheckEmailTool(), SearchEmailTool(), ReadEmailTool()]
+    return [CheckEmailTool(), SearchEmailTool(), ReadEmailTool(), FindUnnecessaryEmailsTool()]

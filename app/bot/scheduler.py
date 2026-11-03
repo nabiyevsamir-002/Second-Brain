@@ -3,7 +3,7 @@
 Əsas işlər:
   • deliver_due_reminders — hər 60 san: vaxtı çatmış xatırlatmaları çatdırır.
   • briefing_tick — saatbaşı: səhər brifinqi, həftəlik icmal və axşam yekunu
-    (bu gün bitənlər, sabah, poçt təmizliyi düyməsi, gündəlik sualı).
+    (bu gün bitənlər, sabah, Claude-un tapdığı lazımsız məktublar, gündəlik sualı).
 
 Gecə pg_dump backup host cron ilə işləyir (scripts/backup.sh) — burada deyil.
 """
@@ -33,6 +33,7 @@ from app.repositories.tasks import list_completed_between, list_open_tasks
 from app.repositories.users import get_user, update_settings
 from app.services.email_watch import check_new_mail, is_mail_owner
 from app.services.journal import EVENING_HEADER
+from app.services.mail_review import build_proposal
 from app.services.reembed import backfill_embeddings
 from app.timeutils import fmt_local, now_local, now_utc
 
@@ -172,15 +173,15 @@ async def _build_digest(session, user_id: int) -> str:
     return "\n".join(lines).strip()
 
 
-async def _promo_count(user_id: int) -> int:
-    """Inbox-dakı reklam məktubları (yalnız poçt sahibi üçün; xəta → 0, yekun dayanmasın)."""
-    if not (providers.has("email") and is_mail_owner(user_id)):
-        return 0
+async def _review_mail(session, user_id: int) -> dict | None:
+    """Claude lazımsız məktublara baxır (yalnız poçt sahibi; xəta → None, yekun dayanmasın)."""
+    if not (providers.has("email") and providers.has("llm") and is_mail_owner(user_id)):
+        return None
     try:
-        return await providers.get("email").promotions_count()
+        return await build_proposal(session, user_id, providers.get("email"), providers.get("llm"))
     except Exception as exc:  # noqa: BLE001
-        log.warning("evening_mail_failed", error=str(exc))
-        return 0
+        log.warning("evening_mail_review_failed", error=str(exc))
+        return None
 
 
 async def _build_evening(session, user_id: int) -> tuple[str, InlineKeyboardMarkup | None]:
@@ -210,12 +211,12 @@ async def _build_evening(session, user_id: int) -> tuple[str, InlineKeyboardMark
         lines.append("")
 
     keyboard = None
-    n_promo = await _promo_count(user_id)
-    if n_promo:
-        lines += [f"🧹 Inbox-da {n_promo} reklam məktubu var.", ""]
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🧹 Bax və təmizlə", callback_data="mc:show")]]
-        )
+    proposal = await _review_mail(session, user_id)
+    if proposal and proposal["items"]:
+        lines += [f"🗑 Lazımsız görünən {len(proposal['items'])} məktub tapdım.", ""]
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🗑 Bax və sil", callback_data=f"mt:show:{proposal['key']}")
+        ]])
 
     lines.append(
         "📝 Bu gün necə keçdi? Bu mesaja cavab ver (yazı və ya səs) — gündəliyinə yazacağam."

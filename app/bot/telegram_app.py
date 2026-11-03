@@ -33,7 +33,7 @@ BOT_COMMANDS = [
     BotCommand("delete", "Qeydi sil"),
     BotCommand("settings", "Brifinq və axşam yekunu ayarları"),
     BotCommand("voice", "Səsli cavab"),
-    BotCommand("mail", "Son məktublar / bildiriş / təmizlə"),
+    BotCommand("mail", "Son məktublar / bildiriş / təmizlə / sil"),
     BotCommand("health", "Sistem sağlamlığı"),
     BotCommand("help", "Kömək"),
     BotCommand("id", "Telegram ID"),
