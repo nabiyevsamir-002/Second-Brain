@@ -1,6 +1,6 @@
-# HANDOFF — harada qaldıq (son yeniləmə 2026-11-03)
+# HANDOFF — harada qaldıq (son yeniləmə 2026-11-04)
 
-## 🚩 HARADA QALDIQ — buradan davam et (2026-11-03 ~23:50 Bakı)
+## 🚩 HARADA QALDIQ — buradan davam et (2026-11-04 ~00:20 Bakı)
 
 **🟢 Bot canlıdır:** `@Personal_AI_Asisstant_bot`, JobRadar-ın Linux noutbukunda (`ssh jobradar-linux`, `~/SecondBrain`), yalnız Claude
 abunəsi ilə. İlk real mesaj 23:23-də ~7 saniyəyə emal olundu. Baza təmiz başlayıb (Samir-in seçimi).
@@ -17,8 +17,8 @@ saatı simulyasiya edib yoxlandı (gecə və gündüz), bazaya yazmadan.
 
 **🌙 Phase 9 — gündəlik rutin (2026-11-03, canlıdır, commit 571ca95):**
 - **Axşam yekunu** hər gün 22:00-da (`/settings`-də aç/söndür): bu gün bitən tapşırıqlar, açıq qalanlar (gecikənlərin sayı), sabahkı
-  xatırlatmalar, Inbox-dakı reklam sayı + «🧹 Bax və təmizlə» düyməsi, «Bu gün necə keçdi?» sualı. Bu mesaja Reply (yazı və ya səs) →
-  «gündəlik» kateqoriyalı qeyd, agentsiz və Claude-suz (`app/services/journal.py`). Mesajı kod yığır, Claude çağırılmır.
+  xatırlatmalar, Claude-un tapdığı lazımsız məktublar + «🗑 Bax və sil» düyməsi (Phase 9.1), «Bu gün necə keçdi?» sualı. Bu mesaja Reply (yazı və ya səs) →
+  «gündəlik» kateqoriyalı qeyd, agentsiz və Claude-suz (`app/services/journal.py`). Mesajı kod yığır; Claude yalnız poçt baxışı üçün bir dəfə çağırılır, alınmasa həmin hissə çıxmır.
 - **Poçt təmizliyi** `/mail təmizlə` və ya düymə: Gmail-in öz «Reklamlar» bölməsi (`category:promotions -is:starred`), son 10-u göstərilir,
   «📦 Hamısını arxivlə» → «↩️ Geri qaytar». Arxiv = Inbox etiketini götürmək, heç nə silinmir. **Vacib:** Gmail Inbox etiketini Inbox-un
   özündən götürəndə STORE-a OK qaytarır, amma heç nə dəyişmir (real poçtda görüldü) — ona görə yazma «All Mail» qovluğunda gedir
@@ -26,7 +26,19 @@ saatı simulyasiya edib yoxlandı (gecə və gündüz), bazaya yazmadan.
 - **Yoxlandı:** 129 pytest; real Gmail-də 1 reklam məktubu arxivləndi (Inbox-da reklam 44 → 43) və geri qaytarıldı (→ 44, məktub
   Inbox-da); Gmail `OR` + `X-GM-MSGID` axtarışı yalnız oxuyaraq yoxlandı; test axşam yekunu 23:33-də düymə ilə Samir-ə göndərildi; loqda 0 xəta.
 
-**Açıq iş:** (1) Telegram-da `/mail` və «yeni məktublarım var?» testi (Samir); (2) droplet-i silmək (DigitalOcean → Destroy, Samir edir).
+**🗑️ Phase 9.1 — lazımsız məktubları silmək (2026-11-04, canlıdır, commit ca6f6f2):**
+- **Giriş:** `/mail sil`, agentə «lazımsız məktubları sil» (`find_unnecessary_emails`, yalnız siyahı hazırlayır) və axşam yekununun «🗑 Bax və sil» düyməsi.
+- **Qərar:** namizədləri kod seçir (`-category:primary -is:starred`), Claude ən yeni 25-inə «sil / saxla» və səbəb yazır (`app/services/mail_review.py`).
+  «Saxla» deyilənlər `mail_kept`-ə düşür, bir daha baxılmır. Məktub məzmunu etibarsızdır, cavabdan yalnız verilən sıra nömrələri qəbul olunur.
+- **Silmə yalnız düymə ilə** (`mt:*`, `_on_trash_callback`): «🗑 Hamısını sil», «✏️ Seç», «✋ Hamısını saxla», sonra «↩️ Geri qaytar» və «🔎 Daha çox yoxla».
+  Agentin silən aləti yoxdur. Silmə = Zibil qutusuna IMAP MOVE (Gmail 30 gün saxlayır), expunge yoxdur. Basanda filtr yenidən yoxlanır: arada ulduz qoyulubsa
+  və ya məktub «Əsas»a keçibsə toxunulmur.
+- **Yoxlandı:** 147 pytest; real Gmail-də Zibil qutusuna köçürmə + geri qaytarma; namizəd seçimi real poçtda yalnız oxuyaraq (Inbox 257, namizəd 129, 25-i ~5 san).
+- **Yoxlanmayıb:** Claude-un real qərarı. Abunə limiti 2026-11-04 04:00 Bakıyadək doludur (botun tokeni də, Mac-dəki `claude` girişi də). Limitdən sonra, real poçta toxunmadan:
+  `ssh jobradar-linux 'cd ~/SecondBrain && docker compose exec -T bot python -' < scripts/mail_review_smoke.py`. Sonra Telegram-da `/mail sil`.
+
+**Açıq iş:** (1) 04:00-dan sonra Phase 9.1-in Claude yoxlaması; (2) Telegram-da `/mail` və «yeni məktublarım var?» testi (Samir);
+(3) droplet-i silmək (DigitalOcean → Destroy, Samir edir).
 
 **Kiçik nasazlıq (düzəldilməyib):** `deploy-from-mac.sh` doctor ❌ versə də sonda «Hazırdır» yazır; doctor başlığındakı «e-poçt: qoşulub» yalnız ayarın
 olması deməkdir, real giriş nəticəsi `E-poçt` sətrindədir.
@@ -34,7 +46,8 @@ olması deməkdir, real giriş nəticəsi `E-poçt` sətrindədir.
 **Gündəlik:** yeniləmə `bash scripts/linux/deploy-from-mac.sh` · yoxlama `ssh jobradar-linux 'cd ~/SecondBrain && docker compose exec bot python scripts/doctor.py'`
 · ətraflı [LINUX.md](LINUX.md).
 **Qaydalar:** JobRadar production-dur, ona toxunma · Mac-da botu işə salma (token canlı botundur) · Samir-in yapışdıracağı əmrlərdə `||` yox, bir sətir.
-**Yoxlanmayıb:** noutbukun real reboot-u, ilk gecə backup-ı (03:15), real yeni məktub bildirişi, Linux-da real xatırlatma çatdırılması
+**Yoxlandı:** ilk gecə backup-ı 2026-11-03 03:15-də işlədi.
+**Yoxlanmayıb:** noutbukun real reboot-u, real yeni məktub bildirişi, Linux-da real xatırlatma çatdırılması
 (ilki 2026-11-04 09:00), saat 22:00-da avtomatik gedən ilk axşam yekunu (2026-11-04), Telegram-da «Bax və təmizlə» →
 «Hamısını arxivlə» düymələri, Samir-in Reply → gündəlik qeydi.
 

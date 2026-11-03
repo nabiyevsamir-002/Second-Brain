@@ -29,7 +29,8 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
   (provider/tool abstraksiyası buna imkan verir).
 - Agent tool-ları: `save_note`, `search_notes` [RAG], `get_related_notes`,
   `create_reminder`, `create_task`, `summarize_category`, `activity_report`,
-  `check_email`/`search_email`/`read_email` [IMAP]; internet: abunədə daxili `WebSearch`
+  `check_email`/`search_email`/`read_email` [IMAP], `find_unnecessary_emails` (yalnız siyahı hazırlayır);
+  internet: abunədə daxili `WebSearch`
   (API rejimində `web_search` [Tavily]).
 - Abunə agenti (`app/agent/sdk_agent.py`): alətlər in-process MCP, Claude Code-un Bash/fayl/WebFetch
   alətləri SÖNDÜRÜLÜB (e-poçt/veb məzmunu etibarsızdır — prompt injection).
@@ -38,6 +39,9 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
   `/voice` setting (Azure TTS), axşam yekununa Reply → `save_journal` («gündəlik» qeydi, Claude-suz).
 - Poçt təmizliyi LLM-siz: siyahını Gmail-in öz «Reklamlar» bölməsi verir (`category:promotions`),
   məktub mətni heç bir əməliyyatı tetikləyə bilməz; arxiv yalnız düymə ilə, heç nə silinmir.
+- Lazımsız məktub silmə (`/mail sil`): Claude yalnız TƏKLİF edir (`app/services/mail_review.py`), namizədləri kod
+  seçir (`-category:primary -is:starred`). Silmə yalnız düymə ilə, Zibil qutusuna köçürmə, geri qaytarılır;
+  agentin məktub silən aləti YOXDUR.
 
 ## Tex Stack
 - Python 3.11+ (konteynerdə 3.12), python-telegram-bot v21 (async)
@@ -47,8 +51,8 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
 - Embedding: lokal `paraphrase-multilingual-mpnet-base-v2` (768 → 1536-ya sıfırla tamamlanır, DB sütunu
   dəyişməyib). OpenAI `text-embedding-3-small` yalnız açar verilərsə. Model dəyişəndə avtomatik re-embed.
 - Web search: abunədə Claude daxili WebSearch; API rejimində Tavily
-- E-poçt: IMAP (oxuma, Gmail App Password); yeganə yazma — `/mail təmizlə`: Gmail Inbox etiketi
-  (X-GM-LABELS) götürülür/qaytarılır = arxiv / geri qaytar
+- E-poçt: IMAP (oxuma, Gmail App Password); yazma yalnız düymə ilə: `/mail təmizlə` (Gmail Inbox etiketi,
+  X-GM-LABELS = arxiv / geri qaytar) və `/mail sil` (Zibil qutusuna MOVE / geri qaytar; expunge yoxdur)
 - PDF/DOCX: pypdf + python-docx
 - Scheduler: PTB JobQueue (reminders çatdırılması + səhər brifinqi + axşam yekunu 22:00) — ✅ Phase 4/9
 - DB: SQLAlchemy (async) + Alembic; struktur log (structlog); config: pydantic-settings
@@ -67,7 +71,7 @@ source ENUM[voice,text,forward,pdf,docx,photo], embedding vector(1536), pinned, 
 `/start` `/help` `/list` `/pinned` `/search` `/related` `/id` `/tasks` `/done` `/remind`
 `/stats` `/health` `/export` `/delete` `/edit` `/settings` `/voice` (Azure `az-AZ`, istəyə bağlı) `/mail`
 `/list iş`·`/list #tag`·`/search <söz> cat:iş #tag` (filtr) · `/list`-də ☆/🗑 düymələr · `/voice mirror`
-· `/mail təmizlə` (reklamlar → 📦 arxiv / ↩️ geri qaytar)
+· `/mail təmizlə` (reklamlar → 📦 arxiv / ↩️ geri qaytar) · `/mail sil` (Claude-un təklifi → 🗑 Zibil qutusu / ↩️ geri qaytar)
 
 ## Təhlükəsizlik
 - Allowlist — yalnız Samir-in telegram_id (`ALLOWED_USER_IDS`).
@@ -99,6 +103,8 @@ source ENUM[voice,text,forward,pdf,docx,photo], embedding vector(1536), pinned, 
 - **Phase 9 — Gündəlik rutin** (2026-11-03): axşam yekunu 22:00 (bu gün bitənlər, açıq işlər, sabahkı
   xatırlatmalar, `/settings`-də aç/söndür) + Reply → «gündəlik» qeydi; poçt təmizliyi `/mail təmizlə`
   (Gmail «Reklamlar», ulduzlulara toxunmur, düymə ilə arxiv + geri qaytar) — migration yoxdur
+- **Phase 9.1 — Lazımsız məktublar** (2026-11-04): `/mail sil`, `find_unnecessary_emails`, axşam yekununda
+  «🗑 Bax və sil»; Claude təklif edir, silmə yalnız düymə ilə Zibil qutusuna — migration yoxdur
 
 ## Metodologiya
 1. Hər fazadan əvvəl qısa plan təsdiqi.
