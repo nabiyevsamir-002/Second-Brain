@@ -1,10 +1,12 @@
 """Abunə agenti — prompt, alət sarğısı, icazə siyahısı (CLI işə salınmır)."""
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
 
+from app import timeutils
 from app.agent.sdk_agent import MCP_SERVER, SDKBrainAgent, _wrap, format_prompt
 from app.config import settings
 from app.models import NoteSource
@@ -100,3 +102,11 @@ def test_save_note_schema_asks_agent_for_metadata():
     assert set(META_PROPERTIES) <= set(rich.input_schema["properties"])
     assert "cleaned_text" in rich.input_schema["required"]
     assert SaveNoteTool.input_schema["required"] == ["content"]  # sinif sxeması pozulmayıb
+
+
+def test_system_prompt_carries_night_rule_and_date_confirmation(monkeypatch):
+    night = datetime(2026, 11, 3, 1, 15, tzinfo=settings.tz)
+    monkeypatch.setattr(timeutils, "now_local", lambda: night)
+    prompt = SDKBrainAgent(FakeLLM(), [EchoTool()]).system_prompt()
+    assert "BU GÜN, 2026-11-03" in prompt  # 01:15-də "sabah" = bu səhər
+    assert "ÖZÜN YAZMA" in prompt  # dəqiq vaxtı kod əlavə edir

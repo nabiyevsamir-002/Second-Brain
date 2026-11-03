@@ -20,8 +20,8 @@ from app.config import settings
 from app.logging_conf import get_logger
 from app.models import NoteSource
 from app.repositories.usage import log_usage
-from app.timeutils import now_local_prompt
-from app.tools.base import Tool, ToolContext
+from app.timeutils import time_context_prompt
+from app.tools.base import Tool, ToolContext, with_confirmations
 
 log = get_logger("sdk_agent")
 
@@ -137,8 +137,8 @@ class SDKBrainAgent:
         return (
             AGENT_SYSTEM_STATIC.format(web_search_intent=intents)
             + SDK_RULES
-            + f"\n\nCARİ VAXT (Asia/Baku): {now_local_prompt()}. Nisbi vaxtları ('sabah', "
-            "'2 saatdan sonra', 'cümə axşamı 9-da') HƏMİŞƏ bu vaxta əsasən hesabla."
+            + "\n\n"
+            + time_context_prompt()
         )
 
     async def handle(
@@ -179,4 +179,4 @@ class SDKBrainAgent:
         except Exception:  # noqa: BLE001 — usage logu kritik deyil
             pass
         log.info("agent_done", user_id=user_id, turns=res.num_turns, tools=calls)
-        return res.text or "Hazırdır."
+        return with_confirmations(res.text or "Hazırdır.", ctx)

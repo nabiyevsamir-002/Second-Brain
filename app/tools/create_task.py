@@ -76,4 +76,7 @@ class CreateTaskTool(Tool):
         if task.recur:
             out += {"daily": " (hər gün 🔁)", "weekly": " (hər həftə 🔁)",
                     "monthly": " (hər ay 🔁)"}.get(task.recur, "")
+        if due is not None:
+            ctx.confirmations.append(f"📌 Tapşırıq #{task.id}: deadline {fmt_local(due)}")
+            out += ". Dəqiq deadline cavabın sonuna avtomatik əlavə olunur: onu təkrar yazma"
         return out + "."

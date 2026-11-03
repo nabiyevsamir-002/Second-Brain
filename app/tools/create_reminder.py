@@ -67,7 +67,9 @@ class CreateReminderTool(Tool):
         repeat = {"daily": " (hər gün 🔁)", "weekly": " (hər həftə 🔁)"}.get(
             reminder.recur, ""
         )
+        ctx.confirmations.append(f"⏰ Xatırlatma #{reminder.id}: {fmt_local(when)}{repeat}")
         return (
             f"Xatırlatma #{reminder.id} quruldu: «{text}» — {fmt_local(when)}{repeat}. "
-            "Vaxtı çatanda sənə yazacağam."
+            "Vaxtı çatanda sənə yazacağam. Dəqiq vaxt cavabın sonuna avtomatik əlavə "
+            "olunur: tarixi, həftə gününü və saatı cavabında təkrar yazma."
         )

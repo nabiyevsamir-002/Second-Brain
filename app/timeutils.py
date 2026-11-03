@@ -7,7 +7,7 @@ Agent (Claude) nisbi vaxtı system prompt-dakı cari Baku vaxtından hesablayır
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.config import settings
 
@@ -56,6 +56,29 @@ def fmt_local(dt: datetime, *, with_weekday: bool = True) -> str:
     return base
 
 
-def now_local_prompt() -> str:
-    """System prompt-a inject üçün cari vaxtın qısa təsviri."""
-    return fmt_local(now_local())
+# Gecə yarısından bu saata qədər istifadəçinin günü hələ bitməyib (yatmayıb).
+NIGHT_END_HOUR = 5
+
+
+def time_context_prompt(now: datetime | None = None) -> str:
+    """System prompt üçün cari vaxt bloku: CARİ VAXT + nisbi vaxt qaydası.
+
+    Gecə (00:00–05:00) istifadəçinin "sabah"ı yatıb duranda gələn gündür, yəni
+    təqvimdə BU GÜN. Agent onu təqvimlə hesablayıb bir gün sonraya qoymasın deyə
+    tarixləri hazır yazırıq.
+    """
+    local = (now or now_local()).astimezone(settings.tz)
+    text = (
+        f"CARİ VAXT (Asia/Baku): {fmt_local(local)}. Nisbi vaxtları ('sabah', "
+        "'2 saatdan sonra', 'cümə axşamı 9-da') HƏMİŞƏ bu vaxta əsasən hesabla."
+    )
+    if local.hour < NIGHT_END_HOUR:
+        today, tomorrow = local.date(), local.date() + timedelta(days=1)
+        text += (
+            " GECƏ QAYDASI: indi gecədir, istifadəçi hələ yatmayıb. Onun 'sabah' "
+            "('sabah səhər', 'sabah 9-da') dediyi gün yatıb duranda gələn gündür: "
+            f"BU GÜN, {today.isoformat()} ({_WEEKDAYS_AZ[today.weekday()]}), "
+            f"{tomorrow.isoformat()} YOX. 'Birisigün' isə {tomorrow.isoformat()} "
+            f"({_WEEKDAYS_AZ[tomorrow.weekday()]}) deməkdir."
+        )
+    return text

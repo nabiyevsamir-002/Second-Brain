@@ -24,6 +24,16 @@ class ToolContext:
     source: Any  # NoteSource (save üçün)
     saved_note: Any = None
     related: list[Any] = field(default_factory=list)
+    # Cavabın sonuna OLDUĞU KİMİ gedən sətirlər (məs. dəqiq xatırlatma vaxtı): LLM tarixi
+    # öz sözləri ilə yazanda həftə gününü səhv sala bilir.
+    confirmations: list[str] = field(default_factory=list)
+
+
+def with_confirmations(reply: str, ctx: ToolContext) -> str:
+    """Alətlərin dəqiq təsdiq sətirlərini agentin cavabının sonuna əlavə et."""
+    if not ctx.confirmations:
+        return reply
+    return reply.rstrip() + "\n\n" + "\n".join(ctx.confirmations)
 
 
 class Tool(ABC):

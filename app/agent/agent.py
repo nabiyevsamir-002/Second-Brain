@@ -8,8 +8,8 @@ from app.logging_conf import get_logger
 from app.models import NoteSource
 from app.providers.llm_claude import ClaudeLLMProvider
 from app.repositories.usage import log_llm_usage
-from app.timeutils import now_local_prompt
-from app.tools.base import ToolContext
+from app.timeutils import time_context_prompt
+from app.tools.base import ToolContext, with_confirmations
 from app.tools.activity_report import ActivityReportTool
 from app.tools.create_reminder import CreateReminderTool
 from app.tools.create_task import CreateTaskTool
@@ -57,6 +57,9 @@ AGENT_SYSTEM_STATIC = (
     "Qaydalar:\n"
     "- Vaxt qeyd olunubsa və istifadəçi xəbərdar edilmək istəyirsə → create_reminder; "
     "sadəcə görüləcək işdirsə → create_task; qalan hallarda şübhə varsa → save_note.\n"
+    "- Xatırlatma və ya deadline-lı tapşırıq quranda tarixi, həftə gününü və saatı "
+    "cavabında ÖZÜN YAZMA: bot dəqiq vaxtı cavabın sonuna avtomatik əlavə edir. Qısa "
+    "təsdiq yaz (məs: «Tamam, xatırladacağam.»).\n"
     "- Niyyət və ya vacib detal (məs. xatırlatma vaxtı) HƏQİQƏTƏN qeyri-müəyyəndirsə, "
     "hərəkətdən ƏVVƏL bir QISA dəqiqləşdirici sual ver. Amma şübhə yoxdursa soruşma — "
     "hər mesajda soruşma, gərəksiz sual vermə.\n"
@@ -93,7 +96,7 @@ def is_complex_query(user_text: str) -> bool:
     )
 
 
-def _system_blocks(has_web_search: bool, now: str) -> list[dict[str, Any]]:
+def _system_blocks(has_web_search: bool, time_block: str) -> list[dict[str, Any]]:
     """System-i 2 blok kimi qur: [statik (keşlənir)] + [cari vaxt (dinamik)].
 
     cache_control statik blokda → tools + statik system keşlənir. Cari vaxt bloku
@@ -104,13 +107,7 @@ def _system_blocks(has_web_search: bool, now: str) -> list[dict[str, Any]]:
     )
     return [
         {"type": "text", "text": static, "cache_control": {"type": "ephemeral"}},
-        {
-            "type": "text",
-            "text": (
-                f"CARİ VAXT (Asia/Baku): {now}. Nisbi vaxtları ('sabah', "
-                "'2 saatdan sonra', 'cümə axşamı 9-da') HƏMİŞƏ bu vaxta əsasən hesabla."
-            ),
-        },
+        {"type": "text", "text": time_block},
     ]
 
 
@@ -118,7 +115,7 @@ def build_system(has_web_search: bool = False) -> str:
     """Düz mətn system prompt (geriyə uyğunluq / test üçün)."""
     return AGENT_SYSTEM_STATIC.format(
         web_search_intent=WEB_SEARCH_INTENT if has_web_search else ""
-    ) + f"\n\nCARİ VAXT (Asia/Baku): {now_local_prompt()}."
+    ) + "\n\n" + time_context_prompt()
 
 
 class BrainAgent:
@@ -191,7 +188,7 @@ class BrainAgent:
         messages: list[dict[str, Any]] = hist + [{"role": "user", "content": user_text}]
 
         # System = keşlənən statik blok + dinamik cari vaxt bloku (prompt caching).
-        system = _system_blocks(self.has_web_search, now_local_prompt())
+        system = _system_blocks(self.has_web_search, time_context_prompt())
         # Model seçimi bütün tur üçün bir dəfə (sadə=Haiku, mürəkkəb=Sonnet).
         model = self._pick_model(user_text, allow_escalation)
         for _ in range(MAX_TOOL_ROUNDS):
@@ -209,7 +206,7 @@ class BrainAgent:
 
             if resp.stop_reason != "tool_use":
                 text = self.llm.text_of(resp).strip()
-                return text or "Hazırdır."
+                return with_confirmations(text or "Hazırdır.", ctx)
 
             messages.append({"role": "assistant", "content": resp.content})
             results = []
