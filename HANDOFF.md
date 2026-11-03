@@ -1,18 +1,30 @@
-# HANDOFF — harada qaldıq (son yeniləmə 2026-11-02)
+# HANDOFF — harada qaldıq (son yeniləmə 2026-11-03)
 
-## 🚩 HARADA QALDIQ — buradan davam et (2026-11-02 ~23:30 Bakı)
+## 🚩 HARADA QALDIQ — buradan davam et (2026-11-03 ~14:30 Bakı)
 
 **🟢 Bot canlıdır:** `@Personal_AI_Asisstant_bot`, JobRadar-ın Linux noutbukunda (`ssh jobradar-linux`, `~/SecondBrain`), yalnız Claude
 abunəsi ilə. İlk real mesaj 23:23-də ~7 saniyəyə emal olundu. Baza təmiz başlayıb (Samir-in seçimi).
 
 **Samir təsdiqlədi:** bot cavab verir (Telegram-da görüb). **Köhnə qeydlər lazım deyil:** droplet silinir, VPS-dən köçürmə ləğv olunub.
 
-**Açıq iş:** e-poçt — Samir Gmail App Password yaradır, sonra `bash scripts/linux/deploy-from-mac.sh --email`. Vəziyyəti `doctor.py` göstərir.
+**🟢 E-poçt qoşuldu (23:50):** real Gmail, App Password ilə. Real poçtda yoxlandı: giriş, son və oxunmamış siyahısı, tam oxuma, axtarış
+(Azərbaycan hərfləri də), oxumaq məktubu oxunmuş etmir (oxunmamış sayı dəyişmədi), bildiriş baza nöqtəsi yazıldı (köhnə məktublara bildiriş getmir).
+
+**🛠️ Xatırlatma düzəlişi (2026-11-03, canlıdır, commit 5a03a68):** gecə 01:15-də «sabah səhər ... xatırlat» yazılmışdı, bot onu bir gün gec
+qurmuşdu. İndi 00:00–05:00 arası «sabah» həmin günün səhəri sayılır. Xatırlatma və deadline-lı tapşırıq cavabının sonuna dəqiq vaxtı kod yazır
+(`⏰ Xatırlatma #N: 2026-11-04 09:00 (Çərşənbə)`), çünki model tarixi öz sözləri ilə yazanda həftə gününü səhv salırdı. Noutbukda real Claude ilə,
+saatı simulyasiya edib yoxlandı (gecə və gündüz), bazaya yazmadan.
+
+**Açıq iş:** (1) Telegram-da `/mail` və «yeni məktublarım var?» testi (Samir); (2) droplet-i silmək (DigitalOcean → Destroy, Samir edir).
+
+**Kiçik nasazlıq (düzəldilməyib):** `deploy-from-mac.sh` doctor ❌ versə də sonda «Hazırdır» yazır; doctor başlığındakı «e-poçt: qoşulub» yalnız ayarın
+olması deməkdir, real giriş nəticəsi `E-poçt` sətrindədir.
 
 **Gündəlik:** yeniləmə `bash scripts/linux/deploy-from-mac.sh` · yoxlama `ssh jobradar-linux 'cd ~/SecondBrain && docker compose exec bot python scripts/doctor.py'`
 · ətraflı [LINUX.md](LINUX.md).
 **Qaydalar:** JobRadar production-dur, ona toxunma · Mac-da botu işə salma (token canlı botundur) · Samir-in yapışdıracağı əmrlərdə `||` yox, bir sətir.
-**Yoxlanmayıb:** noutbukun real reboot-u, ilk gecə backup-ı (03:15).
+**Yoxlanmayıb:** noutbukun real reboot-u, ilk gecə backup-ı (03:15), real yeni məktub bildirişi, Linux-da real xatırlatma çatdırılması
+(ilki 2026-11-04 09:00).
 
 Layihə spesifikasiyası: **[CLAUDE.md](CLAUDE.md)**. Bu fayl **hazırkı canlı vəziyyəti**
 və **növbəti addımı** saxlayır.
@@ -108,8 +120,8 @@ Audit: ilkin spesifikasiyada olub qurulmayan hissələr bağlandı. **Migration 
 **Canlı vəziyyət (quraşdırmadan dərhal sonra oxunub):** `@Personal_AI_Asisstant_bot` noutbukda, konflikt 0, xəta 0, RAM 2.2/5 GB;
 real konteynerdə real tokenlə Claude cavab verdi; JobRadar aktiv, sıfır restart. **Baza təmiz başladı (0 qeyd):** Samir
 «Təmiz başlasın» seçdi, çünki VPS-ə SSH alınmadı (port 22 açıq, amma `id_ed25519` və `gh_actions` ikisi də açmadı; səbəb
-dəqiq bilinmir). **Köhnə qeydlər yalnız droplet-dədir** — silinsə itir, sonradan avtomatik birləşmir. **E-poçt qoşulmayıb**
-(Gmail sualı boş buraxıldı): `bash scripts/linux/deploy-from-mac.sh --email`. İlk real mesaj 23:23-də emal olundu (~7 s, xəta yox);
+dəqiq bilinmir). **Köhnə qeydlər yalnız droplet-dədir** — silinsə itir, sonradan avtomatik birləşmir. **E-poçt** sonradan qoşuldu
+(23:50, yuxarı bax). İlk real mesaj 23:23-də emal olundu (~7 s, xəta yox);
 ondan əvvəlki mesajlardan loqda iz yoxdur, səbəbi dəqiq bilinmir (ehtimal: başqa çat və ya 23:14/23:16 yenidən başlamaları).
 Quraşdırma real noutbukda ~12 dəqiqə çəkdi.
 
@@ -143,7 +155,7 @@ toxunulmayıb):** təmiz qurulma; VPS stop → dump → restore → start; saxta
 qayıtdı); etibarsız Claude tokeni → VPS-ə toxunmadan dayandı; real polling: mesaj → LLM xətası → xam qeyd + xəbərdarlıq,
 `/health`, `/search`, `/mail`; sxem 0004→0005; köhnə vektorlar lokal modellə yenidən hesablandı; limitlər tətbiq olundu;
 yeniləmə 38 s, sıfır sual, VPS-ə toxunmur; **reboot → girişsiz özü qalxır**; backup; `--email`; loqlarda 0 token. 97 pytest.
-**Hələ yoxlanmayıb:** VPS-dən köçürmə real serverdə (giriş alınmadı), real Gmail App Password.
+**Hələ yoxlanmayıb:** VPS-dən köçürmə real serverdə (giriş alınmadı; köçürmə sonra ləğv olundu). Real Gmail App Password 2026-11-02 23:50-də yoxlandı.
 
 ## 🖥️ Phase 8 — Claude abunəsi + Windows PC 24/7 + e-poçt (2026-10-31, commit c244577)
 

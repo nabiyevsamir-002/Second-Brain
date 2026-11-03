@@ -91,7 +91,7 @@ source ENUM[voice,text,forward,pdf,docx,photo], embedding vector(1536), pinned, 
 - **Phase 8 — Abunə + PC + e-poçt** ✅ lokal (Claude abunəsi/Agent SDK, lokal embedding+Whisper, IMAP
   e-poçt + bildiriş, Windows skriptləri, VPS auto-deploy söndürüldü) — migration 0005 (`app_meta`)
 - **Phase 8.1 — Linux bir əmrlə** ✅ lokal e2e (`scripts/linux/deploy-from-mac.sh`, `install.sh`, `docker-compose.host.yml`,
-  `scripts/doctor.py`, canlı Claude 12/12) — 🟢 real noutbukda CANLI (2026-11-02); e-poçt hələ qoşulmayıb
+  `scripts/doctor.py`, canlı Claude 12/12) — 🟢 real noutbukda CANLI (2026-11-02); e-poçt 🟢 qoşulub (Gmail, 2026-11-02)
 
 ## Metodologiya
 1. Hər fazadan əvvəl qısa plan təsdiqi.
