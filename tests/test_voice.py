@@ -12,6 +12,7 @@ from app.bot.telegram_app import build_application
 from app.config import settings
 from app.models import NoteSource
 from app.providers.registry import providers
+from app.providers.stt_local import FALLBACK_MODEL, LocalWhisperSTTProvider
 
 
 class FakeFile:
@@ -134,6 +135,12 @@ def test_voice_reaches_the_agent_with_typing_shown_and_file_removed(env):
     assert env.seen["agent"] == ("su içməliyəm", NoteSource.voice)
     assert "typing" in env.message.actions
     assert not os.path.exists(env.seen["paths"][0])
+
+
+def test_missing_converted_model_falls_back_instead_of_crashing(tmp_path):
+    assert LocalWhisperSTTProvider("/models/whisper/yoxdur")._source() == FALLBACK_MODEL
+    assert LocalWhisperSTTProvider(str(tmp_path))._source() == str(tmp_path)
+    assert LocalWhisperSTTProvider("large-v3")._source() == "large-v3"
 
 
 def test_telegram_timeouts_are_longer_than_the_defaults(monkeypatch):

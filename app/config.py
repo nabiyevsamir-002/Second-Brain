@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # Əlaqəli qeyd həddi (cosine məsafə). 0 = embedding provayderinin öz dəyəri.
     related_max_distance: float = 0.0
     stt_backend: str = "auto"
-    whisper_model: str = "small"  # faster-whisper: small | medium | large-v3-turbo | large-v3
+    whisper_model: str = "small"  # faster-whisper: ad və ya çevrilmiş qovluq (.env.example-a bax)
     whisper_compute_type: str = "int8"
     model_cache_dir: str = ""  # lokal model faylları; Docker-də /models (volume), boş = default keş
 
