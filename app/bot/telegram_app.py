@@ -89,7 +89,14 @@ def _register_common(app: Application, user_filter=None) -> None:
 
 
 def build_application(post_init=None) -> Application:
-    builder = Application.builder().token(settings.telegram_bot_token)
+    # Default 5 san ev şəbəkəsində az gəlir: səs yükləməsi TimedOut ilə itirdi.
+    builder = (
+        Application.builder()
+        .token(settings.telegram_bot_token)
+        .connect_timeout(15)
+        .read_timeout(30)
+        .write_timeout(30)
+    )
     if post_init is not None:
         builder = builder.post_init(post_init)
     app = builder.build()

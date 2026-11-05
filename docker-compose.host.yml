@@ -13,8 +13,8 @@ services:
         max-file: "3"
 
   bot:
-    mem_limit: 5g            # ölçülmüş pik ~2.4 GB (modellər + Claude CLI)
-    memswap_limit: 5g
+    mem_limit: 8g            # Whisper large-v3 təkbaşına pik ~5 GB + embedding + Claude CLI
+    memswap_limit: 8g
     cpu_shares: 256          # CPU üçün yarışda digər xidmətlər üstün (default 1024)
     oom_score_adj: 500       # yaddaş böhranında əvvəlcə bu konteyner ölür, JobRadar yox
     logging: *logs

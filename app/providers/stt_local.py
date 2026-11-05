@@ -1,8 +1,9 @@
 """Lokal STT — faster-whisper (CTranslate2, CPU int8), API açarı YOX.
 
-Telegram səsi (OGG/Opus) birbaşa oxunur (PyAV daxili FFmpeg). Model ölçüsü WHISPER_MODEL:
-small (sürətli, köhnə CPU üçün) · medium (AZ üçün daha dəqiq) · large-v3-turbo (ən dəqiq,
-güclü CPU). Transkript sonra Claude tərəfindən təmizlənir (səhvlərin bir hissəsi düzəlir).
+Telegram səsi (OGG/Opus) birbaşa oxunur (PyAV daxili FFmpeg). Model ölçüsü WHISPER_MODEL.
+Noutbukda (i7-3630QM) real AZ nitqi ilə ölçülüb, söz səhvi · ~6 san səsə vaxt · RAM pik:
+small 58% · 6 san · 0.8 GB | medium 34% · 20 san · 2.7 GB | large-v3-turbo 27% · 31 san · 2.3 GB |
+large-v3 17% · 39 san · 5 GB. Transkripti sonra Claude kontekstdən düzəldir (VOICE_NOTE).
 """
 
 from __future__ import annotations

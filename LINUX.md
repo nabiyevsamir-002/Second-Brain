@@ -80,7 +80,7 @@ Qənaət (`~/SecondBrain/.env`, sonra `docker compose up -d bot`): `ESCALATION_E
 | `telegram_conflict` | Eyni token başqa yerdə işləyir (VPS? Mac-dakı bot?) — onu dayandır |
 | «Claude girişi uğursuz» | Token vaxtı keçib: Mac-da `claude setup-token`, tokeni `~/SecondBrain/.env`-də `CLAUDE_CODE_OAUTH_TOKEN=` sətrinə yaz, sonra `docker compose up -d bot` |
 | E-poçt: `AUTHENTICATIONFAILED` | App Password səhvdir: `--email` ilə yenidən yaz |
-| Səs tanıma zəifdir/yavaşdır | `.env`: `WHISPER_MODEL=medium` (daha dəqiq, yavaş) və ya `base` (sürətli) |
+| Səs tanıma yavaşdır | `.env`: `WHISPER_MODEL=medium` (təxminən 2 dəfə sürətli, 2 dəfə çox söz səhvi), sonra `bash scripts/linux/deploy-from-mac.sh` |
 
 ## Silmək
 

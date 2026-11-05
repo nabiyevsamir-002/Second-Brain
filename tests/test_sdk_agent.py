@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from app import timeutils
+from app.agent.agent import VOICE_NOTE
 from app.agent.sdk_agent import MCP_SERVER, SDKBrainAgent, _wrap, format_prompt
 from app.config import settings
 from app.models import NoteSource
@@ -87,6 +88,18 @@ def test_handle_allows_only_our_tools_and_websearch(monkeypatch):
     assert opts["allowed_tools"] == [f"mcp__{MCP_SERVER}__echo", "WebSearch"]
     assert opts["model"] == "sonnet"  # mürəkkəb sual → smart
     assert "WebSearch" in opts["system"] and "ETİBARSIZ" in opts["system"]
+
+
+def test_voice_message_is_marked_for_the_agent_but_not_for_model_choice(monkeypatch):
+    monkeypatch.setattr(settings, "escalation_enabled", True)
+    llm = FakeLLM()
+    agent = SDKBrainAgent(llm, [EchoTool()])
+    asyncio.run(agent.handle(None, 1, "salam", NoteSource.voice, None))
+    asyncio.run(agent.handle(None, 1, "salam", NoteSource.text, None))
+    voice_prompt, voice_opts = llm.calls[0]
+    assert voice_prompt == f"{VOICE_NOTE}\nsalam"
+    assert voice_opts["model"] == "haiku"  # uzun qeyd sadə mesajı Sonnet-ə qaldırmır
+    assert llm.calls[1][0] == "salam"
 
 
 def test_handle_marks_whether_tools_ran_on_failure():

@@ -15,7 +15,7 @@ from typing import Any
 from claude_agent_sdk import create_sdk_mcp_server
 from claude_agent_sdk import tool as sdk_tool
 
-from app.agent.agent import AGENT_SYSTEM_STATIC, is_complex_query
+from app.agent.agent import AGENT_SYSTEM_STATIC, is_complex_query, with_voice_note
 from app.config import settings
 from app.logging_conf import get_logger
 from app.models import NoteSource
@@ -173,7 +173,8 @@ class SDKBrainAgent:
             max_turns=self.max_turns,
         )
         try:
-            res = await self.llm.run(format_prompt(history, user_text), options)
+            prompt = format_prompt(history, with_voice_note(user_text, source))
+            res = await self.llm.run(prompt, options)
         except Exception as exc:
             exc.tools_ran = list(calls)  # handler: alət işləyibsə xam qeyd dublikat olmasın
             raise

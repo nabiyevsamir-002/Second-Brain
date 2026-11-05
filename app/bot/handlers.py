@@ -20,7 +20,7 @@ from decimal import Decimal
 from anthropic import APIError
 from sqlalchemy import text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import Conflict
+from telegram.error import BadRequest, Conflict, NetworkError, TelegramError
 from telegram.ext import ContextTypes
 
 # Proses başlama anı (uptime üçün) — modul importunda = app start.
@@ -566,6 +566,26 @@ async def photo_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(reply)
 
 
+VOICE_DOWNLOAD_ATTEMPTS = 3
+VOICE_RETRY_DELAY_SEC = 1
+
+
+async def _download_voice(bot, file_id: str, path: str) -> None:
+    """Səsi Telegram-dan yüklə; şəbəkə qırılanda təkrar cəhd et (BadRequest təkrarlanmır)."""
+    for attempt in range(1, VOICE_DOWNLOAD_ATTEMPTS + 1):
+        try:
+            tg_file = await bot.get_file(file_id)
+            await tg_file.download_to_drive(path)
+            return
+        except BadRequest:
+            raise
+        except NetworkError as exc:  # TimedOut da NetworkError-dur
+            if attempt == VOICE_DOWNLOAD_ATTEMPTS:
+                raise
+            log.warning("voice_download_retry", attempt=attempt, error=repr(exc))
+            await asyncio.sleep(VOICE_RETRY_DELAY_SEC * attempt)
+
+
 async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _rate_ok(update):
         return
@@ -573,15 +593,19 @@ async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("🎙 Səs tanıma deaktivdir (OPENAI_API_KEY yoxdur).")
         return
 
-    await update.message.chat.send_action("typing")
     voice = update.message.voice or update.message.audio
-    tg_file = await context.bot.get_file(voice.file_id)
-
     fd, path = tempfile.mkstemp(suffix=".oga")
     os.close(fd)
     try:
-        await tg_file.download_to_drive(path)
-        transcript = await providers.get("stt").transcribe(path, language="az")
+        async with _keep_typing(update):  # böyük modeldə çevrilmə onlarla saniyə çəkir
+            await _download_voice(context.bot, voice.file_id, path)
+            started = time.monotonic()
+            transcript = await providers.get("stt").transcribe(path, language="az")
+            stt_sec = round(time.monotonic() - started, 1)
+    except TelegramError as exc:
+        log.warning("voice_download_failed", error=repr(exc))
+        await update.message.reply_text("🎙 Səsi Telegram-dan yükləmək alınmadı, yenidən göndər.")
+        return
     finally:
         try:
             os.remove(path)
@@ -606,7 +630,10 @@ async def note_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     except Exception:  # noqa: BLE001 — usage logu kritik deyil
         pass
 
-    log.info("voice_transcribed", user_id=update.effective_user.id, chars=len(transcript))
+    log.info(
+        "voice_transcribed", user_id=update.effective_user.id, chars=len(transcript),
+        audio_sec=getattr(voice, "duration", 0), stt_sec=stt_sec,
+    )
     if is_journal_reply(update.message, context.bot.id):
         await _save_journal_reply(
             update, transcript, NoteSource.voice, prefix=f"🎙 _{transcript}_\n\n"

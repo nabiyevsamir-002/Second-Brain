@@ -96,6 +96,19 @@ def is_complex_query(user_text: str) -> bool:
     )
 
 
+VOICE_NOTE = (
+    "[Sistem qeydi: bu mesaj səsdən avtomatik yazıya çevrilib, bəzi sözlər səhv eşidilmiş ola "
+    "bilər. Mənanı kontekstdən tut, oxşar səslənən düzgün sözü götür; xatırlatma, tapşırıq və "
+    "qeyd mətnini düzgün yazılışla saxla. İstifadəçiyə orfoqrafiya səhvindən danışma. Ad, vaxt "
+    "və ya məbləğ kimi vacib yerdə əmin deyilsənsə, bir qısa sual ver.]"
+)
+
+
+def with_voice_note(user_text: str, source: NoteSource) -> str:
+    """Səsdən gələn mətnin önünə qeyd: agent onu səhv eşidilə bilən transkript kimi oxusun."""
+    return f"{VOICE_NOTE}\n{user_text}" if source == NoteSource.voice else user_text
+
+
 def _system_blocks(has_web_search: bool, time_block: str) -> list[dict[str, Any]]:
     """System-i 2 blok kimi qur: [statik (keşlənir)] + [cari vaxt (dinamik)].
 
@@ -185,7 +198,9 @@ class BrainAgent:
         while hist and hist[0]["role"] != "user":
             hist.pop(0)
 
-        messages: list[dict[str, Any]] = hist + [{"role": "user", "content": user_text}]
+        messages: list[dict[str, Any]] = hist + [
+            {"role": "user", "content": with_voice_note(user_text, source)}
+        ]
 
         # System = keşlənən statik blok + dinamik cari vaxt bloku (prompt caching).
         system = _system_blocks(self.has_web_search, time_context_prompt())
