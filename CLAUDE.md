@@ -46,7 +46,8 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
 ## Tex Stack
 - Python 3.11+ (konteynerdə 3.12), python-telegram-bot v21 (async)
 - Claude (abunə, Agent SDK): `claude-haiku-4-5` (agent beyni); `claude-sonnet-5` çətin suallar (escalation)
-- STT: lokal faster-whisper `large-v3` (AZ, int8, RAM pik ~5 GB, qısa səsə ~40 san); OpenAI Whisper yalnız `OPENAI_API_KEY` verilərsə. `av<19` pin!
+- STT: lokal faster-whisper + AZ üçün öyrədilmiş `LocalDoc/azerbaijani-whisper-small` (CT2 int8, `scripts/convert_az_whisper.py`,
+  ~7 san, RAM 0.7 GB); OpenAI Whisper yalnız `OPENAI_API_KEY` verilərsə. `av<19` pin!
 - TTS: Azure Speech `az-AZ` (BabekNeural/BanuNeural) — istəyə bağlı (açar yoxdursa `/voice` söndürülü)
 - Embedding: lokal `paraphrase-multilingual-mpnet-base-v2` (768 → 1536-ya sıfırla tamamlanır, DB sütunu
   dəyişməyib). OpenAI `text-embedding-3-small` yalnız açar verilərsə. Model dəyişəndə avtomatik re-embed.
@@ -105,8 +106,8 @@ source ENUM[voice,text,forward,pdf,docx,photo], embedding vector(1536), pinned, 
   (Gmail «Reklamlar», ulduzlulara toxunmur, düymə ilə arxiv + geri qaytar) — migration yoxdur
 - **Phase 9.1 — Lazımsız məktublar** (2026-11-04): `/mail sil`, `find_unnecessary_emails`, axşam yekununda
   «🗑 Bax və sil»; Claude təklif edir, silmə yalnız düymə ilə Zibil qutusuna — migration yoxdur
-- **Phase 9.2 — Səs tanıma** (2026-11-05): `large-v3` (real nitqdə söz səhvi 58% → 17%), agentə «mətn səsdən
-  gəlib» qeydi (`VOICE_NOTE`), səs yükləməsinə timeout + təkrar cəhd — migration yoxdur
+- **Phase 9.2 — Səs tanıma** (2026-11-05): AZ üçün öyrədilmiş kiçik Whisper (real nitqdə söz səhvi 58% → 16%, ~7 san),
+  agentə «mətn səsdən gəlib» qeydi (`VOICE_NOTE`), səs yükləməsinə timeout + təkrar cəhd — migration yoxdur
 
 ## Metodologiya
 1. Hər fazadan əvvəl qısa plan təsdiqi.

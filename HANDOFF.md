@@ -37,18 +37,19 @@ saatı simulyasiya edib yoxlandı (gecə və gündüz), bazaya yazmadan.
   2026-11-05 canlı Claude: uydurma məktublarda 15/15, təhlükəli səhv 0 (`docker compose exec -T bot python - < scripts/mail_review_smoke.py`, ~40 san);
   agent səhv eşidilmiş səsli cümlədən aləti çağırdı, real poçtda 25-dən 14-ü təklif olundu (test ROLLBACK-la, heç nə silinmədi).
 
-**🎙️ Phase 9.2 — səs tanıma (2026-11-05, canlıdır, commit 5c70a76):**
+**🎙️ Phase 9.2 — səs tanıma (2026-11-05, canlıdır, commit 9dd3684):**
+- **Son vəziyyət:** `WHISPER_MODEL=/models/whisper/az-small-ct2` = `LocalDoc/azerbaijani-whisper-small` (Apache-2.0, `small` ölçüsü, AZ üçün öyrədilib), bir dəfə `scripts/convert_az_whisper.py` ilə çevrilib. `large-v3`-də real 1 saniyəlik səs 45 san çəkdi, Samir «çox gözləyirəm» dedi.
+  Ölçü (noutbukda, int8, beam 5): Common Voice 20 klip: **söz səhvi 16,1% · hərf 5,5% · 6,8 san · RAM 0,7 GB** (`large-v3`: 16,8% · 3,9% · 38,6 san · 5,0 GB). FLEURS test 20 klip: **20,7% · 6,5% · 6,1 san**, adi `small` 52,7% · 15,6% · 5,8 san. Model kartındakı FLEURS rəqəmləri: AZ small 20,54%, adi `large-v3` 21,00%, adi `small` 52,17%.
+  Həddi: model Common Voice-la öyrədilmiş ola bilər, ona görə o 16,1% yumşaq ola bilər; FLEURS testi kartda ayrıca test kimi göstərilir. Çevrilmiş model yoxdursa bot adi `small`-a keçir (loqda `whisper_model_missing`). Bu CPU-da `int8` ən sürətlidir: `small` üzərində `float32` 8,8 san, `int16` 9,6 san, `int8` 6,9 san; CPU 2,9 GHz, throttle yoxdur. `.env`-dəki OpenAI və Azure açarları 401 qaytarır.
 - **Səbəb:** `small` real nitqi pis eşidirdi («laxımsız məşdüplara», «suiks mələyəm»). Əvvəlki «medium daha yaxşı deyil» qənaəti tək təmiz nümunədən idi, səhv çıxdı.
 - **Ölçü** (noutbukda, Common Voice az, 20 oxunmuş klip, orta 6 san, int8, beam 5; söz səhvi · hərf səhvi · bir səsə vaxt · RAM pik):
   `small` 58,1% · 15,9% · 6 san · 0,8 GB | `medium` 34,2% · 7,8% · 20 san · 2,7 GB | `large-v3-turbo` 27,1% · 6,0% · 31 san · 2,3 GB | **`large-v3`** 16,8% · 3,9% · 39 san · 5,0 GB.
   Vaxtı encoder aparır: qısa səs də təxminən bu qədər çəkir. `beam_size=1`: 36 san, 3,8 GB, 18,7%, saxlanmadı. 8 thread: 41 san, daha yavaş. Whisper `initial_prompt`: `small`-da kömək etmədi (15,9% → 16,4%), əlavə olunmadı.
-- **Dəyişiklik:** `WHISPER_MODEL=large-v3` (noutbuk `.env`-i və `.env.example`), bot RAM limiti 8 GB (boş vaxtda real RAM 5,5 GB + fayl keşi; noutbukda 6,9 GB available qalır, OOM 0).
-  Agentə mətnin səsdən gəldiyi deyilir (`VOICE_NOTE`, `with_voice_note`). Telegram timeout-ları 30 san, `_download_voice` 3 cəhd + aydın xəta (2026-11-04 12:14-də səs `get_file` TimedOut ilə itmişdi). Çevrilmə boyu «yazır…».
+- **Digər dəyişikliklər:** Agentə mətnin səsdən gəldiyi deyilir (`VOICE_NOTE`, `with_voice_note`). Telegram timeout-ları 30 san, `_download_voice` 3 cəhd + aydın xəta (2026-11-04 12:14-də səs `get_file` TimedOut ilə itmişdi). Çevrilmə boyu «yazır…».
 - **Yoxlandı:** 154 pytest; deploy; canlı agent «suiks mələyəm»-i artıq saxlamır, dəqiqləşdirir (bazaya yazılmadı).
-- **İlk real səs (11:30):** Telegram-ın dediyi uzunluq 1 san, çevrilmə 45,2 san, mətn «Necə sən qədər alın?» (düzgünlüyü Samir təsdiqləməyib). Sonra real RAM 6,0 GB, cgroup peak 7,43 GB (fayl keşi daxil), OOM 0, noutbukda 6,3 GB available.
-- **Yoxlanmayıb:** normal uzunluqlu real səslərdə dəqiqlik və vaxt (`voice_transcribed` loqunda `audio_sec`, `stt_sec`). Bu CPU-da AVX var, AVX2 yox: `int8` əvəzinə `int16` və ya `float32` daha sürətli ola bilər (ehtimal, ölçülməyib; `float32` çox RAM istəyir). BuzzASR (MIT, `large-v3` fine-tune, CT2-yə çevirmək lazımdır) sınanmayıb: Common Voice-la öyrədilib, bu testdə ədalətsiz üstünlük alar, ona görə yalnız Samir-in real səsli nümunələri ilə müqayisə et.
+- **Yoxlanmayıb:** Samir yeni modeli «Bəli» ilə təsdiqlədi, amma real səslərin vaxtı loqdan oxunmayıb (`voice_transcribed` → `audio_sec`, `stt_sec`; Mac ev şəbəkəsində deyildi). BuzzASR sınanmayıb: `large-v3` ölçüsündədir, ona görə yavaşdır.
 
-**Açıq iş:** (1) normal uzunluqlu real səsli mesajlarla `large-v3` testi (Samir) və gözləməni azaltmaq; (2) Telegram-da `/mail` və «yeni məktublarım var?» testi (Samir);
+**Açıq iş:** (1) evdən: real səslərin `stt_sec`-ini oxumaq və volume-dan `large-v3`-ü silmək (3 GB); (2) Telegram-da `/mail` və «yeni məktublarım var?» testi (Samir);
 (3) droplet-i silmək (DigitalOcean → Destroy, Samir edir).
 
 **Kiçik nasazlıq (düzəldilməyib):** `deploy-from-mac.sh` doctor ❌ versə də sonda «Hazırdır» yazır; doctor başlığındakı «e-poçt: qoşulub» yalnız ayarın
