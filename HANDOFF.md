@@ -1,6 +1,6 @@
-# HANDOFF — harada qaldıq (son yeniləmə 2026-11-04)
+# HANDOFF — harada qaldıq (son yeniləmə 2026-11-05)
 
-## 🚩 HARADA QALDIQ — buradan davam et (2026-11-04 ~00:20 Bakı)
+## 🚩 HARADA QALDIQ — buradan davam et (2026-11-05 ~11:30 Bakı)
 
 **🟢 Bot canlıdır:** `@Personal_AI_Asisstant_bot`, JobRadar-ın Linux noutbukunda (`ssh jobradar-linux`, `~/SecondBrain`), yalnız Claude
 abunəsi ilə. İlk real mesaj 23:23-də ~7 saniyəyə emal olundu. Baza təmiz başlayıb (Samir-in seçimi).
@@ -33,11 +33,22 @@ saatı simulyasiya edib yoxlandı (gecə və gündüz), bazaya yazmadan.
 - **Silmə yalnız düymə ilə** (`mt:*`, `_on_trash_callback`): «🗑 Hamısını sil», «✏️ Seç», «✋ Hamısını saxla», sonra «↩️ Geri qaytar» və «🔎 Daha çox yoxla».
   Agentin silən aləti yoxdur. Silmə = Zibil qutusuna IMAP MOVE (Gmail 30 gün saxlayır), expunge yoxdur. Basanda filtr yenidən yoxlanır: arada ulduz qoyulubsa
   və ya məktub «Əsas»a keçibsə toxunulmur.
-- **Yoxlandı:** 147 pytest; real Gmail-də Zibil qutusuna köçürmə + geri qaytarma; namizəd seçimi real poçtda yalnız oxuyaraq (Inbox 257, namizəd 129, 25-i ~5 san).
-- **Yoxlanmayıb:** Claude-un real qərarı. Abunə limiti 2026-11-04 04:00 Bakıyadək doludur (botun tokeni də, Mac-dəki `claude` girişi də). Limitdən sonra, real poçta toxunmadan:
-  `ssh jobradar-linux 'cd ~/SecondBrain && docker compose exec -T bot python -' < scripts/mail_review_smoke.py`. Sonra Telegram-da `/mail sil`.
+- **Yoxlandı:** pytest; real Gmail-də Zibil qutusuna köçürmə + geri qaytarma; namizəd seçimi real poçtda yalnız oxuyaraq (Inbox 257, namizəd 129, 25-i ~5 san).
+  2026-11-05 canlı Claude: uydurma məktublarda 15/15, təhlükəli səhv 0 (`docker compose exec -T bot python - < scripts/mail_review_smoke.py`, ~40 san);
+  agent səhv eşidilmiş səsli cümlədən aləti çağırdı, real poçtda 25-dən 14-ü təklif olundu (test ROLLBACK-la, heç nə silinmədi).
 
-**Açıq iş:** (1) 04:00-dan sonra Phase 9.1-in Claude yoxlaması; (2) Telegram-da `/mail` və «yeni məktublarım var?» testi (Samir);
+**🎙️ Phase 9.2 — səs tanıma (2026-11-05, canlıdır, commit 5c70a76):**
+- **Səbəb:** `small` real nitqi pis eşidirdi («laxımsız məşdüplara», «suiks mələyəm»). Əvvəlki «medium daha yaxşı deyil» qənaəti tək təmiz nümunədən idi, səhv çıxdı.
+- **Ölçü** (noutbukda, Common Voice az, 20 oxunmuş klip, orta 6 san, int8, beam 5; söz səhvi · hərf səhvi · bir səsə vaxt · RAM pik):
+  `small` 58,1% · 15,9% · 6 san · 0,8 GB | `medium` 34,2% · 7,8% · 20 san · 2,7 GB | `large-v3-turbo` 27,1% · 6,0% · 31 san · 2,3 GB | **`large-v3`** 16,8% · 3,9% · 39 san · 5,0 GB.
+  Vaxtı encoder aparır: qısa səs də təxminən bu qədər çəkir. `beam_size=1`: 36 san, 3,8 GB, 18,7%, saxlanmadı. 8 thread: 41 san, daha yavaş. Whisper `initial_prompt`: `small`-da kömək etmədi (15,9% → 16,4%), əlavə olunmadı.
+- **Dəyişiklik:** `WHISPER_MODEL=large-v3` (noutbuk `.env`-i və `.env.example`), bot RAM limiti 8 GB (boş vaxtda real RAM 5,5 GB + fayl keşi; noutbukda 6,9 GB available qalır, OOM 0).
+  Agentə mətnin səsdən gəldiyi deyilir (`VOICE_NOTE`, `with_voice_note`). Telegram timeout-ları 30 san, `_download_voice` 3 cəhd + aydın xəta (2026-11-04 12:14-də səs `get_file` TimedOut ilə itmişdi). Çevrilmə boyu «yazır…».
+- **Yoxlandı:** 154 pytest; deploy; canlı agent «suiks mələyəm»-i artıq saxlamır, dəqiqləşdirir (bazaya yazılmadı).
+- **İlk real səs (11:30):** Telegram-ın dediyi uzunluq 1 san, çevrilmə 45,2 san, mətn «Necə sən qədər alın?» (düzgünlüyü Samir təsdiqləməyib). Sonra real RAM 6,0 GB, cgroup peak 7,43 GB (fayl keşi daxil), OOM 0, noutbukda 6,3 GB available.
+- **Yoxlanmayıb:** normal uzunluqlu real səslərdə dəqiqlik və vaxt (`voice_transcribed` loqunda `audio_sec`, `stt_sec`). Bu CPU-da AVX var, AVX2 yox: `int8` əvəzinə `int16` və ya `float32` daha sürətli ola bilər (ehtimal, ölçülməyib; `float32` çox RAM istəyir). BuzzASR (MIT, `large-v3` fine-tune, CT2-yə çevirmək lazımdır) sınanmayıb: Common Voice-la öyrədilib, bu testdə ədalətsiz üstünlük alar, ona görə yalnız Samir-in real səsli nümunələri ilə müqayisə et.
+
+**Açıq iş:** (1) normal uzunluqlu real səsli mesajlarla `large-v3` testi (Samir) və gözləməni azaltmaq; (2) Telegram-da `/mail` və «yeni məktublarım var?» testi (Samir);
 (3) droplet-i silmək (DigitalOcean → Destroy, Samir edir).
 
 **Kiçik nasazlıq (düzəldilməyib):** `deploy-from-mac.sh` doctor ❌ versə də sonda «Hazırdır» yazır; doctor başlığındakı «e-poçt: qoşulub» yalnız ayarın
@@ -202,7 +213,7 @@ e-poçt oxumaq. Addım-addım quraşdırma: **[WINDOWS.md](WINDOWS.md)**. Migrat
   Əlaqəli hədd 0.55 (provayder atributu). Model dəyişəndə `services/reembed.py`: `app_meta.embedding_model`
   fərqlidirsə vektorlar NULL → `reembed_tick` (60s) partiyalarla doldurur (VPS dump-ı → avtomatik).
 - **Lokal STT** (`stt_local.py`, faster-whisper `small`, int8): AZ nümunəsində small ~1.7s, medium 2.5× yavaş
-  və daha yaxşı deyil. ⚠️ `av<19` pin (PyAV 19 `metadata_errors`-u silib → faster-whisper 1.2 sınır).
+  və daha yaxşı deyil (tək təmiz nümunə idi, real nitqdə səhv çıxdı: Phase 9.2). ⚠️ `av<19` pin (PyAV 19 `metadata_errors`-u silib → faster-whisper 1.2 sınır).
 - **E-poçt** (`providers/email_imap.py`): IMAP readonly + `BODY.PEEK` (oxunmuş etmir), UTF-8 axtarış (literal),
   INTERNALDATE fallback. Alətlər `check_email`/`search_email`/`read_email`; `/mail` (`<uid>`, `on|off`);
   `email_tick` (10 dəq) → yeni məktub bildirişi, reklam AI-siz süzülür, triaj TƏK Claude çağırışı; brifinqdə
