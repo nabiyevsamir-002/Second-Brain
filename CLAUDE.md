@@ -53,7 +53,8 @@ söhbət et (RAG semantik axtarış) — şəxsi "ikinci beyin".
   dəyişməyib). OpenAI `text-embedding-3-small` yalnız açar verilərsə. Model dəyişəndə avtomatik re-embed.
 - Web search: abunədə Claude daxili WebSearch; API rejimində Tavily
 - E-poçt: IMAP (oxuma, Gmail App Password); yazma yalnız düymə ilə: `/mail təmizlə` (Gmail Inbox etiketi,
-  X-GM-LABELS = arxiv / geri qaytar) və `/mail sil` (Zibil qutusuna MOVE / geri qaytar; expunge yoxdur)
+  X-GM-LABELS = arxiv / geri qaytar) və `/mail sil` (Zibil qutusuna MOVE / geri qaytar; expunge yoxdur).
+  İki poçt: `EMAIL_ADDRESS_2` + `EMAIL_PASSWORD_2`; hər poçtun öz vəziyyəti və düymələri var (`state_key`)
 - PDF/DOCX: pypdf + python-docx
 - Scheduler: PTB JobQueue (reminders çatdırılması + səhər brifinqi + axşam yekunu 22:00) — ✅ Phase 4/9
 - DB: SQLAlchemy (async) + Alembic; struktur log (structlog); config: pydantic-settings
@@ -73,6 +74,7 @@ source ENUM[voice,text,forward,pdf,docx,photo], embedding vector(1536), pinned, 
 `/stats` `/health` `/export` `/delete` `/edit` `/settings` `/voice` (Azure `az-AZ`, istəyə bağlı) `/mail`
 `/list iş`·`/list #tag`·`/search <söz> cat:iş #tag` (filtr) · `/list`-də ☆/🗑 düymələr · `/voice mirror`
 · `/mail təmizlə` (reklamlar → 📦 arxiv / ↩️ geri qaytar) · `/mail sil` (Claude-un təklifi → 🗑 Zibil qutusu / ↩️ geri qaytar)
+· iki poçt qoşulubsa: `/mail <poçt>` yalnız o poçt (`/mail <poçt> <uid>`, `/mail <poçt> sil`, `/mail <poçt> təmizlə`)
 
 ## Təhlükəsizlik
 - Allowlist — yalnız Samir-in telegram_id (`ALLOWED_USER_IDS`).
@@ -108,6 +110,9 @@ source ENUM[voice,text,forward,pdf,docx,photo], embedding vector(1536), pinned, 
   «🗑 Bax və sil»; Claude təklif edir, silmə yalnız düymə ilə Zibil qutusuna — migration yoxdur
 - **Phase 9.2 — Səs tanıma** (2026-11-05): AZ üçün öyrədilmiş kiçik Whisper (real nitqdə söz səhvi 58% → 16%, ~7 san),
   agentə «mətn səsdən gəlib» qeydi (`VOICE_NOTE`), səs yükləməsinə timeout + təkrar cəhd — migration yoxdur
+- **Phase 9.3 — İki poçt** (2026-11-07): bildiriş, `/mail`, agent alətləri, brifinq, təmizlik, silmə və axşam yekunu iki Gmail
+  poçtunu əhatə edir; düymə yalnız öz poçtuna toxunur, bir poçtun xətası o birini dayandırmır;
+  qoşmaq: `deploy-from-mac.sh --email2` — migration yoxdur
 
 ## Metodologiya
 1. Hər fazadan əvvəl qısa plan təsdiqi.

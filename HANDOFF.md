@@ -1,6 +1,6 @@
-# HANDOFF — harada qaldıq (son yeniləmə 2026-11-05)
+# HANDOFF — harada qaldıq (son yeniləmə 2026-11-07)
 
-## 🚩 HARADA QALDIQ — buradan davam et (2026-11-05 ~11:30 Bakı)
+## 🚩 HARADA QALDIQ — buradan davam et (2026-11-07 Bakı)
 
 **🟢 Bot canlıdır:** `@Personal_AI_Asisstant_bot`, JobRadar-ın Linux noutbukunda (`ssh jobradar-linux`, `~/SecondBrain`), yalnız Claude
 abunəsi ilə. İlk real mesaj 23:23-də ~7 saniyəyə emal olundu. Baza təmiz başlayıb (Samir-in seçimi).
@@ -49,11 +49,20 @@ saatı simulyasiya edib yoxlandı (gecə və gündüz), bazaya yazmadan.
 - **Yoxlandı:** 154 pytest; deploy; canlı agent «suiks mələyəm»-i artıq saxlamır, dəqiqləşdirir (bazaya yazılmadı).
 - **Yoxlanmayıb:** Samir yeni modeli «Bəli» ilə təsdiqlədi, amma real səslərin vaxtı loqdan oxunmayıb (`voice_transcribed` → `audio_sec`, `stt_sec`; Mac ev şəbəkəsində deyildi). BuzzASR sınanmayıb: `large-v3` ölçüsündədir, ona görə yavaşdır.
 
+**📮 Phase 9.3 — iki poçt (2026-11-07, canlıdır):**
+- **Nə edir:** bot iki Gmail poçtuna baxır (`EMAIL_ADDRESS` + `EMAIL_ADDRESS_2`, hərəsinin öz App Password-u). Yeni məktub bildirişi, `/mail`, agent alətləri, səhər brifinqi, `/mail təmizlə`, `/mail sil` və axşam yekunu ikisini də əhatə edir; hər yerdə poçtun qısa adı görünür (ünvanın ilk 3 hərfi, `[abc]`). Tək poçtda mesajlar əvvəlki kimidir.
+- **Dizayn:** `providers.get("email")` artıq poçtların SİYAHISIDIR (`mailboxes()`, `app/services/email_watch.py`). UID hər poçtda ayrıdır: `/mail <poçt> <uid>`, `read_email(uid, account)`; adsız uid ikisində də varsa soruşulur. Vəziyyət poçta görədir (`state_key`): birinci poçt köhnə açarlarda qalır (`mail_kept`), ikincisi `:2` ilə (`mail_kept:2`), migration yoxdur. Düymənin açarında poçtun adı var (`<ad>-<vaxt>`), yalnız öz poçtuna toxunur; adsız köhnə düymə birinci poçta gedir. Bir poçtun xətası o birini dayandırmır və cavabda görünür.
+- **Qoşmaq:** `bash scripts/linux/deploy-from-mac.sh --email2` (parol gizli soruşulur, `.env.seed` ilə gedir, sonra silinir).
+- **Claude limiti:** axşam yekunu və `/mail sil` poçt başına 1 çağırış edir (2 poçtda 2); yeni məktub triajı ikinci poçtun məktub sayına görə artır.
+- **Yoxlandı:** 211 pytest; deploy; birinci poçtun vəziyyəti yerində qaldı (`mail_kept` 26); hər iki poçta real giriş və yalnız oxuyaraq saylar (ikinci poçtda reklam 1, namizəd 13); ikinci poçtun baza nöqtəsi yazıldı; canlı Claude (ROLLBACK): «ikinci poçtumda son 3 məktub» → `check_email(account=…, limit=3)`, «oxunmamış məktublarım» → hər iki poçt. Real ikinci poçtda (Samir-in icazəsi ilə, provayder səviyyəsində) 1 reklam məktubu Zibil qutusuna köçürüldü və geri qaytarıldı: Inbox 103 → 102 → 103, oxunmamış 91 → 90 → 91, birinci poçtun sayları dəyişmədi; düymə açarı düzgün poçta gedir.
+- **Yoxlanmayıb:** Telegram-da düymələrin ikinci poçtda real basılması (marşrut testlərlə yoxlanıb), ikinci poçta gələn real yeni məktubun bildirişi (aşkarlanması yoxlanıb, göndərilməsi yox), Telegram-da `/mail` görünüşü.
+
 **Açıq iş:** (1) evdən: real səslərin `stt_sec`-ini oxumaq və volume-dan `large-v3`-ü silmək (3 GB); (2) Telegram-da `/mail` və «yeni məktublarım var?» testi (Samir);
 (3) droplet-i silmək (DigitalOcean → Destroy, Samir edir).
 
 **Kiçik nasazlıq (düzəldilməyib):** `deploy-from-mac.sh` doctor ❌ versə də sonda «Hazırdır» yazır; doctor başlığındakı «e-poçt: qoşulub» yalnız ayarın
-olması deməkdir, real giriş nəticəsi `E-poçt` sətrindədir.
+olması deməkdir, real giriş nəticəsi `E-poçt` sətrindədir. «↩️ Geri qaytar»: məktub Inbox-a yeni UID ilə qayıdır (real poçtda 594 → 678), ona görə növbəti
+yoxlama onu yeni sayır; reklam/bülleten üçün bildiriş getmir, başqa məktub üçün «yeni məktub» bildirişi gedə bilər.
 
 **Gündəlik:** yeniləmə `bash scripts/linux/deploy-from-mac.sh` · yoxlama `ssh jobradar-linux 'cd ~/SecondBrain && docker compose exec bot python scripts/doctor.py'`
 · ətraflı [LINUX.md](LINUX.md).

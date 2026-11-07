@@ -39,6 +39,7 @@ Telegram, baza, Claude və e-poçtu yoxlayır → JobRadar-ın toxunulmaz qaldı
 |---|---|
 | Kodu yenilə | `bash scripts/linux/deploy-from-mac.sh` |
 | E-poçtu sonradan əlavə et | `bash scripts/linux/deploy-from-mac.sh --email` |
+| İkinci poçtu əlavə et | `bash scripts/linux/deploy-from-mac.sh --email2` |
 | Hər şey qaydasındadır? | `ssh jobradar-linux 'cd ~/SecondBrain && docker compose exec bot python scripts/doctor.py'` |
 | Bot nə edir | `ssh jobradar-linux 'cd ~/SecondBrain && docker compose logs -f bot'` |
 | Yenidən başlat | `ssh jobradar-linux 'cd ~/SecondBrain && docker compose restart bot'` |
@@ -79,7 +80,7 @@ Qənaət (`~/SecondBrain/.env`, sonra `docker compose up -d bot`): `ESCALATION_E
 | «Qoşulmaq olmadı» | Noutbuk sönüb və ya IP dəyişib: yuxarıdakı `samir@YENİ-IP` |
 | `telegram_conflict` | Eyni token başqa yerdə işləyir (VPS? Mac-dakı bot?) — onu dayandır |
 | «Claude girişi uğursuz» | Token vaxtı keçib: Mac-da `claude setup-token`, tokeni `~/SecondBrain/.env`-də `CLAUDE_CODE_OAUTH_TOKEN=` sətrinə yaz, sonra `docker compose up -d bot` |
-| E-poçt: `AUTHENTICATIONFAILED` | App Password səhvdir: `--email` ilə yenidən yaz |
+| E-poçt: `AUTHENTICATIONFAILED` | App Password səhvdir: `--email` (ikinci poçt: `--email2`) ilə yenidən yaz |
 | Loqda `whisper_model_missing`, səs pis başa düşülür | Azərbaycan modeli çevrilməyib: `scripts/convert_az_whisper.py`-nin əvvəlindəki əmri noutbukda işlət (bir dəfə, ~5 dəq), sonra `docker compose up -d bot` |
 
 ## Silmək
