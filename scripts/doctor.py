@@ -22,6 +22,7 @@ from app.db import SessionLocal
 from app.providers.errors import LLMUnavailableError, SubscriptionLimitError
 from app.providers.factory import init_providers
 from app.providers.registry import providers
+from app.services.email_watch import mailboxes
 from app.timeutils import fmt_local
 
 failed = 0
@@ -87,14 +88,16 @@ async def check_claude() -> None:
 
 
 async def check_email() -> None:
-    if not providers.has("email"):
+    boxes = mailboxes()
+    if not boxes:
         warn("E-poçt qoşulmayıb (istəyə bağlı: EMAIL_ADDRESS + EMAIL_PASSWORD)")
         return
-    try:
-        unread = await providers.get("email").unread_count()
-        good(f"E-poçt ({settings.email_address}): {unread} oxunmamış")
-    except Exception as exc:  # noqa: BLE001
-        bad(f"E-poçt: {exc} — App Password-u yoxla")
+    for box in boxes:
+        try:
+            unread = await box.unread_count()
+            good(f"E-poçt ({box.address}): {unread} oxunmamış")
+        except Exception as exc:  # noqa: BLE001
+            bad(f"E-poçt ({box.address}): {exc} — App Password-u yoxla")
 
 
 async def main() -> int:

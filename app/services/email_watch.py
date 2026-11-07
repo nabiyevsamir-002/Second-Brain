@@ -4,6 +4,9 @@ Hər EMAIL_CHECK_INTERVAL_MIN dəqiqədən bir yeni məktublar yoxlanır. Reklam
 (List-Unsubscribe) AI-siz "aşağı" sayılır; qalanları TƏK Claude çağırışı ilə vacib/adi
 ayrılır və 1 cümləlik xülasə alır. Yalnız vacib/adi məktub varsa Telegram mesajı gedir.
 Vəziyyət sahibin users.settings-ində: email_uidvalidity, email_last_uid, email_notify.
+
+Bir neçə poçt: hər poçtun öz provayderi və öz vəziyyəti var (state_key). Bir poçtun xətası
+o birini dayandırmır.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from typing import Any
 
 from app.config import settings
 from app.logging_conf import get_logger
+from app.providers.registry import providers
 from app.services.notes_service import _parse_json
 
 log = get_logger("email_watch")
@@ -36,6 +40,50 @@ def short_sender(sender: str) -> str:
 def is_mail_owner(user_id: int) -> bool:
     """Poçt qutusu ALLOWED_USER_IDS-in birincisinindir (allowlist boşdursa heç kimin)."""
     return bool(settings.allowed_ids) and user_id == settings.allowed_ids[0]
+
+
+def mailboxes() -> list[Any]:
+    """Qoşulmuş poçtlar (factory hər ünvan üçün ayrıca provayder yaradır)."""
+    return providers.get("email") if providers.has("email") else []
+
+
+def find_mailbox(label: str = "") -> Any | None:
+    """Ada görə poçt; boş ad (tək poçt, adsız köhnə düymə) → birinci poçt."""
+    boxes = mailboxes()
+    if not label:
+        return boxes[0] if boxes else None
+    return next((b for b in boxes if b.label == label), None)
+
+
+def box_for_key(key: str) -> Any | None:
+    """Düymə açarından poçt: «abc-1107220000» → abc; köhnə düymələrdə ad yoxdur → birinci."""
+    return find_mailbox(key.split("-", 1)[0] if "-" in key else "")
+
+
+def state_key(box: Any, name: str) -> str:
+    """users.settings açarı. Birinci poçt köhnə adda qalır: mövcud vəziyyəti itmir."""
+    return f"{name}:{box.slot}" if box.slot > 1 else name
+
+
+def mail_tag(label: str) -> str:
+    """Mesajlarda poçtun adı: «[abc] »; tək poçtda heç nə."""
+    return f"[{label}] " if label else ""
+
+
+async def find_by_uid(boxes: list[Any], uid: int) -> tuple[list[tuple[Any, Any]], str]:
+    """UID hər poçtda ayrıdır → ((poçt, məktub) siyahısı, son xətanın mətni)."""
+    found: list[tuple[Any, Any]] = []
+    problem = ""
+    for box in boxes:
+        try:
+            mail = await box.get(uid)
+        except Exception as exc:  # noqa: BLE001 — o biri poçtda tapıla bilər
+            log.warning("mail_get_failed", account=box.label, error=str(exc))
+            problem = str(exc)
+            continue
+        if mail is not None:
+            found.append((box, mail))
+    return found, problem
 
 
 async def triage(llm: Any, mails: list[Any]) -> dict[int, tuple[str, str]]:
@@ -65,7 +113,9 @@ async def triage(llm: Any, mails: list[Any]) -> dict[int, tuple[str, str]]:
     return out
 
 
-def format_new_mail(mails: list[Any], verdicts: dict[int, tuple[str, str]]) -> str | None:
+def format_new_mail(
+    mails: list[Any], verdicts: dict[int, tuple[str, str]], label: str = ""
+) -> str | None:
     """Telegram mətni (düz mətn). Yalnız reklam/bildiriş varsa None — narahat etmə."""
     lines: list[str] = []
     low = 0
@@ -79,19 +129,21 @@ def format_new_mail(mails: list[Any], verdicts: dict[int, tuple[str, str]]) -> s
             lines.append(f"   ↳ {summary}")
     if not lines:
         return None
-    header = f"📬 {len(mails)} yeni məktub:"
-    footer = ([f"⚪ +{low} reklam/bildiriş"] if low else []) + ["Oxumaq: /mail <uid> · /mail"]
+    header = f"📬 {mail_tag(label)}{len(mails)} yeni məktub:"
+    read = f"/mail {label} <uid>" if label else "/mail <uid>"
+    footer = ([f"⚪ +{low} reklam/bildiriş"] if low else []) + [f"Oxumaq: {read} · /mail"]
     return "\n".join([header, *lines, *footer])
 
 
 async def check_new_mail(box: Any, llm: Any, s: dict) -> tuple[str | None, dict]:
     """(göndəriləcək mətn | None, settings dəyişiklikləri) — saf axın, scheduler göndərir."""
-    uv, last, mails = await box.poll_new(s.get("email_last_uid"), s.get("email_uidvalidity"))
-    changes = {"email_uidvalidity": uv, "email_last_uid": last}
+    last_key, uv_key = state_key(box, "email_last_uid"), state_key(box, "email_uidvalidity")
+    uv, last, mails = await box.poll_new(s.get(last_key), s.get(uv_key))
+    changes = {uv_key: uv, last_key: last}
     if not mails:
         return None, changes
     verdicts: dict[int, tuple[str, str]] = {}
     candidates = [m for m in mails if not m.bulk]
     if llm is not None and settings.email_ai_triage and candidates:
         verdicts = await triage(llm, candidates)
-    return format_new_mail(mails, verdicts), changes
+    return format_new_mail(mails, verdicts, box.label), changes

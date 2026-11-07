@@ -94,6 +94,8 @@ def test_triage_tolerates_bad_items():
 
 def test_check_new_mail_skips_ai_for_newsletters():
     class Box:
+        label, slot = "", 1
+
         async def poll_new(self, last, uv):
             return 9, 12, [_mail(12, "Endirim", bulk=True)]
 

@@ -58,9 +58,18 @@ from app.services.budget import (
     status_for,
 )
 from app.services.ingest_service import ingest_document, ingest_image, ingest_url
-from app.services.email_watch import is_mail_owner, short_sender
+from app.services.email_watch import (
+    box_for_key,
+    find_by_uid,
+    find_mailbox,
+    is_mail_owner,
+    mail_tag,
+    mailboxes,
+    short_sender,
+    state_key,
+)
 from app.services.journal import is_journal_reply, save_journal
-from app.services.mail_review import MAX_KEPT, build_proposal
+from app.services.mail_review import MAX_KEPT, build_proposal, new_key
 from app.services.notes_service import capture_note, recapture_note
 from app.timeutils import fmt_local, now_local, now_utc
 from app.tools.email_tools import MAX_BODY_CHARS
@@ -96,6 +105,7 @@ HELP = (
     "/mail — son məktublar (/mail <uid> oxu · /mail on|off bildiriş)\n"
     "/mail təmizlə — reklam məktublarını düymə ilə arxivlə (heç nə silinmir)\n"
     "/mail sil — lazımsız məktubları Claude tapır, təsdiqlə Zibil qutusuna köçür\n"
+    "İki poçt varsa: /mail <poçt> yalnız o poçt (/mail <poçt> <uid> · /mail <poçt> sil)\n"
     "/id — Telegram ID\n\n"
     "*Nə göndərə bilərsən:*\n"
     "• 📝 mətn / 🎙 səs → qeyd, sual, tapşırıq və ya xatırlatma\n"
@@ -155,7 +165,8 @@ def backend_label() -> str:
         stt = f"lokal Whisper ({settings.whisper_model})"
     else:
         stt = "OpenAI Whisper"
-    mail = "qoşulub" if providers.has("email") else "yox"
+    boxes = mailboxes()
+    mail = "yox" if not boxes else "qoşulub" if len(boxes) == 1 else f"{len(boxes)} poçt qoşulub"
     return f"{llm} · embed: {embed} · STT: {stt} · e-poçt: {mail}"
 
 
@@ -391,10 +402,11 @@ async def _run_agent(
     for part in split_message(prefix + reply):
         await update.message.reply_text(part)
 
-    # Agent lazımsız məktublara baxıbsa: siyahı + təsdiq düymələri ayrıca mesajla.
-    trash = s.get("mail_trash") or {}
-    if trash.get("deliver"):
-        await _deliver_trash_proposal(update, trash)
+    # Agent lazımsız məktublara baxıbsa: hər poçtun siyahısı + təsdiq düymələri ayrıca mesajla.
+    for box in mailboxes():
+        trash = s.get(state_key(box, "mail_trash")) or {}
+        if trash.get("deliver"):
+            await _deliver_trash_proposal(update, box, trash)
 
     # Bu mesajın xərci də daxil: hədd indi keçilibsə səs söndürülür + bir dəfə bildiriş.
     budget, notice = await _budget_after_reply(user.id, s, budget)
@@ -1266,8 +1278,11 @@ MAIL_NOT_CONFIGURED = (
 CLEANUP_SAMPLE = 10  # təmizlik siyahısında göstərilən son reklam məktubları
 
 
-def _cleanup_text(total: int, sample) -> str:
-    lines = [f"🧹 Inbox-da {total} reklam məktubu var (Gmail-in «Reklamlar» bölməsi).", ""]
+def _cleanup_text(total: int, sample, label: str = "") -> str:
+    lines = [
+        f"🧹 {mail_tag(label)}Inbox-da {total} reklam məktubu var (Gmail-in «Reklamlar» bölməsi).",
+        "",
+    ]
     if total > len(sample):
         lines.append(f"Son {len(sample)} məktub:")
     for m in sample:
@@ -1281,35 +1296,42 @@ def _cleanup_text(total: int, sample) -> str:
     return "\n".join(lines)
 
 
-async def _send_cleanup(bot, uid: int) -> None:
-    """Reklam məktublarının siyahısı + «Hamısını arxivlə» (/mail təmizlə, axşam yekunu)."""
-    if not providers.has("email"):
+async def _send_cleanup(bot, uid: int, only=None) -> None:
+    """Reklam məktublarının siyahısı + «Hamısını arxivlə» — hər poçta ayrı mesaj (/mail təmizlə)."""
+    boxes = [only] if only else mailboxes()
+    if not boxes:
         await bot.send_message(uid, MAIL_NOT_CONFIGURED)
         return
     if not is_mail_owner(uid):
         await bot.send_message(uid, "🔒 Poçt təmizliyi yalnız poçt qutusunun sahibi üçündür.")
         return
+    for box in boxes:
+        await _send_box_cleanup(bot, uid, box)
+
+
+async def _send_box_cleanup(bot, uid: int, box) -> None:
+    tag = mail_tag(box.label)
     try:
-        ids, sample = await providers.get("email").promotions(limit=CLEANUP_SAMPLE)
+        ids, sample = await box.promotions(limit=CLEANUP_SAMPLE)
     except Exception as exc:  # noqa: BLE001
-        log.error("mail_cleanup_list_failed", error=str(exc))
-        await bot.send_message(uid, f"📭 Reklam məktublarını almaq olmadı: {exc}")
+        log.error("mail_cleanup_list_failed", account=box.label, error=str(exc))
+        await bot.send_message(uid, f"📭 {tag}Reklam məktublarını almaq olmadı: {exc}")
         return
     if not ids:
-        await bot.send_message(uid, "✨ Inbox-da reklam məktubu yoxdur.")
+        await bot.send_message(uid, f"✨ {tag}Inbox-da reklam məktubu yoxdur.")
         return
-    # Düymə bu siyahıya bağlıdır: köhnə mesajın düyməsi yeni siyahını arxivləməsin.
-    key = now_utc().strftime("%m%d%H%M%S")
+    # Düymə bu siyahıya və bu poçta bağlıdır: köhnə mesajın düyməsi yeni siyahını arxivləməsin.
+    key = new_key(box.label)
     async with SessionLocal() as session:
         await get_or_create_user(session, uid)
         batch = {"key": key, "ids": ids, "archived": []}
-        await update_settings(session, uid, {"mail_cleanup": batch})
+        await update_settings(session, uid, {state_key(box, "mail_cleanup"): batch})
         await session.commit()
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton(f"📦 Hamısını arxivlə ({len(ids)})", callback_data=f"mc:arch:{key}"),
         InlineKeyboardButton("İmtina", callback_data="mc:cancel"),
     ]])
-    await bot.send_message(uid, _cleanup_text(len(ids), sample), reply_markup=keyboard)
+    await bot.send_message(uid, _cleanup_text(len(ids), sample, box.label), reply_markup=keyboard)
 
 
 async def _on_cleanup_callback(q, context, uid: int, parts: list[str]) -> None:
@@ -1324,19 +1346,22 @@ async def _on_cleanup_callback(q, context, uid: int, parts: list[str]) -> None:
     if action not in ("arch", "undo") or not (providers.has("email") and is_mail_owner(uid)):
         return
     key = parts[2] if len(parts) > 2 else ""
-    async with SessionLocal() as session:
-        user = await get_or_create_user(session, uid)
-        batch = dict((user.settings or {}).get("mail_cleanup") or {})
+    box = box_for_key(key)  # düymə yalnız öz poçtuna toxunur
+    batch: dict = {}
+    if box is not None:
+        async with SessionLocal() as session:
+            user = await get_or_create_user(session, uid)
+            batch = dict((user.settings or {}).get(state_key(box, "mail_cleanup")) or {})
     if not key or batch.get("key") != key:
         await q.edit_message_text("⌛ Bu siyahı köhnəlib. Yenisi üçün: /mail təmizlə")
         return
+    tag = mail_tag(box.label)
     ids = batch.get("ids" if action == "arch" else "archived") or []
     if not ids:
         state = "arxivlənib" if action == "arch" else "Inbox-a qaytarılıb"
-        await q.edit_message_text(f"Bu siyahı artıq {state}.")
+        await q.edit_message_text(f"{tag}Bu siyahı artıq {state}.")
         return
 
-    box = providers.get("email")
     await q.edit_message_text("⏳ Arxivləyirəm…" if action == "arch" else "⏳ Inbox-a qaytarıram…")
     try:
         if action == "arch":
@@ -1346,22 +1371,24 @@ async def _on_cleanup_callback(q, context, uid: int, parts: list[str]) -> None:
             restored = await box.unarchive(ids)
             batch.update(archived=[])
     except Exception as exc:  # noqa: BLE001 — siyahı dəyişmir, sonra yenidən cəhd etmək olar
-        log.error("mail_cleanup_failed", action=action, error=str(exc))
+        log.error("mail_cleanup_failed", account=box.label, action=action, error=str(exc))
         await q.edit_message_text(f"⚠️ Alınmadı: {exc}\nBir az sonra /mail təmizlə ilə yoxla.")
         return
     async with SessionLocal() as session:
-        await update_settings(session, uid, {"mail_cleanup": batch})
+        await update_settings(session, uid, {state_key(box, "mail_cleanup"): batch})
         await session.commit()
 
     if action == "undo":
-        log.info("mail_unarchived", count=restored)
-        await q.edit_message_text(f"↩️ {restored} məktub Inbox-a qaytarıldı.")
+        log.info("mail_unarchived", account=box.label, count=restored)
+        await q.edit_message_text(f"↩️ {tag}{restored} məktub Inbox-a qaytarıldı.")
     elif not archived:
-        await q.edit_message_text("🤷 Bu məktublar artıq Inbox-da deyil, toxunulacaq heç nə yoxdur.")
-    else:
-        log.info("mail_archived", count=len(archived))
         await q.edit_message_text(
-            f"📦 {len(archived)} məktub arxivləndi: Inbox-dan çıxdı, Gmail-də qalır.",
+            f"🤷 {tag}Bu məktublar artıq Inbox-da deyil, toxunulacaq heç nə yoxdur."
+        )
+    else:
+        log.info("mail_archived", account=box.label, count=len(archived))
+        await q.edit_message_text(
+            f"📦 {tag}{len(archived)} məktub arxivləndi: Inbox-dan çıxdı, Gmail-də qalır.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("↩️ Geri qaytar", callback_data=f"mc:undo:{key}")]]
             ),
@@ -1379,7 +1406,7 @@ def _cut(text: str, n: int) -> str:
 
 
 def _trash_text(p: dict) -> str:
-    lines = [f"🗑 Lazımsız görünən {len(p['items'])} məktub "
+    lines = [f"🗑 {mail_tag(p.get('account', ''))}Lazımsız görünən {len(p['items'])} məktub "
              f"(Claude {p['reviewed']} məktuba baxdı):", ""]
     for n, it in enumerate(p["items"], 1):
         lines.append(f"{n}. {_cut(it['from'], 22)} — {_cut(it['subject'], 45)} "
@@ -1412,15 +1439,18 @@ def _trash_keyboard(p: dict, picking: bool = False) -> InlineKeyboardMarkup:
 async def _send_trash_proposal(bot, uid: int, p: dict) -> None:
     if not p.get("items"):
         await bot.send_message(
-            uid, f"✨ Lazımsız məktub tapılmadı (Claude {p.get('reviewed', 0)} məktuba baxdı)."
+            uid,
+            f"✨ {mail_tag(p.get('account', ''))}Lazımsız məktub tapılmadı "
+            f"(Claude {p.get('reviewed', 0)} məktuba baxdı).",
         )
         return
     await bot.send_message(uid, _trash_text(p), reply_markup=_trash_keyboard(p))
 
 
-async def _review_and_send(bot, uid: int) -> None:
-    """Claude ilə yeni baxış → siyahı + təsdiq düymələri (/mail sil, «Daha çox yoxla»)."""
-    if not providers.has("email"):
+async def _review_and_send(bot, uid: int, only=None) -> None:
+    """Claude ilə yeni baxış → hər poçtun siyahısı + düymələri (/mail sil, «Daha çox yoxla»)."""
+    boxes = [only] if only else mailboxes()
+    if not boxes:
         await bot.send_message(uid, MAIL_NOT_CONFIGURED)
         return
     if not is_mail_owner(uid):
@@ -1430,67 +1460,79 @@ async def _review_and_send(bot, uid: int) -> None:
         await bot.send_message(uid, "🤖 Claude qoşulmayıb — məktublara baxa bilmirəm.")
         return
     await bot.send_message(uid, "🔎 Claude məktublara baxır…")  # düyməni təkrar basmasın
-    try:
-        async with SessionLocal() as session:
-            p = await build_proposal(session, uid, providers.get("email"), providers.get("llm"))
-            await session.commit()
-    except Exception as exc:  # noqa: BLE001
-        log.error("mail_review_failed", error=str(exc))
-        await bot.send_message(uid, f"⚠️ Məktublara baxmaq alınmadı: {exc}")
-        return
-    await _send_trash_proposal(bot, uid, p)
+    for box in boxes:
+        try:
+            async with SessionLocal() as session:
+                p = await build_proposal(session, uid, box, providers.get("llm"))
+                await session.commit()
+        except Exception as exc:  # noqa: BLE001 — o biri poçta baxılsın
+            log.error("mail_review_failed", account=box.label, error=str(exc))
+            await bot.send_message(
+                uid, f"⚠️ {mail_tag(box.label)}Məktublara baxmaq alınmadı: {exc}"
+            )
+            continue
+        await _send_trash_proposal(bot, uid, p)
 
 
-async def _deliver_trash_proposal(update: Update, p: dict) -> None:
+async def _deliver_trash_proposal(update: Update, box, p: dict) -> None:
     """Agent alətinin hazırladığı siyahını göndər (bir dəfə)."""
     async with SessionLocal() as session:
         await update_settings(session, update.effective_user.id,
-                              {"mail_trash": {**p, "deliver": False}})
+                              {state_key(box, "mail_trash"): {**p, "deliver": False}})
         await session.commit()
     await update.message.reply_text(_trash_text(p), reply_markup=_trash_keyboard(p))
 
 
 async def _on_trash_callback(q, context, uid: int, parts: list[str]) -> None:
-    """mt:more · mt:show|pick|t|del|keep|undo:<key> — lazımsız məktub düymələri.
+    """mt:more[:<poçt>] · mt:show|pick|t|del|keep|undo:<key> — lazımsız məktub düymələri.
 
     Silmə YALNIZ buradan gedir: düyməni istifadəçinin özü basır, məktub mətni və ya Claude
-    bunu edə bilməz.
+    bunu edə bilməz. Düymənin açarında poçtun adı var: yalnız öz poçtuna toxunur.
     """
     action = parts[1] if len(parts) > 1 else ""
     key = parts[2] if len(parts) > 2 else ""
     if not (providers.has("email") and is_mail_owner(uid)):
         return
-    if action == "more":
-        await _review_and_send(context.bot, uid)
+    if action == "more":  # adsız köhnə düymə → bütün poçtlar
+        await _review_and_send(context.bot, uid, find_mailbox(key) if key else None)
         return
-    box = providers.get("email")
+    stale = "⌛ Bu siyahı köhnəlib. Yenisi üçün: /mail sil"
+    box = box_for_key(key)
+    if box is None:  # poçt artıq qoşulu deyil
+        if action == "show":
+            await context.bot.send_message(uid, stale)
+        else:
+            await q.edit_message_text(stale)
+        return
+    tag = mail_tag(box.label)
+    kept_key, trash_key = state_key(box, "mail_kept"), state_key(box, "mail_trash")
+    undo_key = state_key(box, "mail_trash_undo")
     async with SessionLocal() as session:
         user = await get_or_create_user(session, uid)
         s = dict(user.settings or {})
-    kept = list(s.get("mail_kept") or [])
-    undo = dict(s.get("mail_trash_undo") or {})
+    kept = list(s.get(kept_key) or [])
+    undo = dict(s.get(undo_key) or {})
 
     if action == "undo":
         ids = undo.pop(key, None)
         if not ids:
-            await q.edit_message_text("Bu məktublar artıq Inbox-a qaytarılıb.")
+            await q.edit_message_text(f"{tag}Bu məktublar artıq Inbox-a qaytarılıb.")
             return
         await q.edit_message_text("⏳ Inbox-a qaytarıram…")
         try:
             restored = await box.untrash(ids)
         except Exception as exc:  # noqa: BLE001
-            log.error("mail_untrash_failed", error=str(exc))
+            log.error("mail_untrash_failed", account=box.label, error=str(exc))
             await q.edit_message_text(f"⚠️ Alınmadı: {exc}")
             return
-        await _save_settings(uid, {"mail_trash_undo": undo, "mail_kept": (kept + ids)[-MAX_KEPT:]})
-        log.info("mail_untrashed", count=restored)
-        await q.edit_message_text(f"↩️ {restored} məktub Inbox-a qaytarıldı — bir daha "
+        await _save_settings(uid, {undo_key: undo, kept_key: (kept + ids)[-MAX_KEPT:]})
+        log.info("mail_untrashed", account=box.label, count=restored)
+        await q.edit_message_text(f"↩️ {tag}{restored} məktub Inbox-a qaytarıldı — bir daha "
                                   "təklif olunmayacaq.")
         return
 
-    p = dict(s.get("mail_trash") or {})
+    p = dict(s.get(trash_key) or {})
     if not key or p.get("key") != key or not p.get("items"):
-        stale = "⌛ Bu siyahı köhnəlib. Yenisi üçün: /mail sil"
         if action == "show":  # axşam yekununun düyməsi: mətnə toxunma, Reply → gündəlik ona bağlıdır
             await context.bot.send_message(uid, stale)
         elif p.get("key") != key:  # eyni siyahıda ikinci basış: nəticə və «Geri qaytar» qalsın
@@ -1504,7 +1546,7 @@ async def _on_trash_callback(q, context, uid: int, parts: list[str]) -> None:
             i = int(parts[3])
             if 1 <= i <= len(p["items"]):
                 p["drop"] = sorted(set(p.get("drop") or []) ^ {i})
-                await _save_settings(uid, {"mail_trash": p})
+                await _save_settings(uid, {trash_key: p})
         await q.edit_message_reply_markup(reply_markup=_trash_keyboard(p, picking=True))
         return
     if action not in ("del", "keep"):
@@ -1519,27 +1561,29 @@ async def _on_trash_callback(q, context, uid: int, parts: list[str]) -> None:
         try:
             trashed = await box.trash(chosen)
         except Exception as exc:  # noqa: BLE001 — siyahı qalır, düyməni yenidən basmaq olar
-            log.error("mail_trash_failed", error=str(exc))
+            log.error("mail_trash_failed", account=box.label, error=str(exc))
             await q.edit_message_text(f"⚠️ Alınmadı: {exc}\nBir az sonra /mail sil ilə yoxla.")
             return
     if trashed:
         undo[key] = trashed
     await _save_settings(uid, {
-        "mail_trash": {**p, "items": []},
-        "mail_trash_undo": dict(list(undo.items())[-5:]),
-        "mail_kept": (kept + keep)[-MAX_KEPT:],
+        trash_key: {**p, "items": []},
+        undo_key: dict(list(undo.items())[-5:]),
+        kept_key: (kept + keep)[-MAX_KEPT:],
     })
     rows = []
     if trashed:
         rows.append([InlineKeyboardButton("↩️ Geri qaytar", callback_data=f"mt:undo:{key}")])
-    rows.append([InlineKeyboardButton("🔎 Daha çox yoxla", callback_data="mt:more")])
+    more = f"mt:more:{box.label}" if box.label else "mt:more"
+    rows.append([InlineKeyboardButton("🔎 Daha çox yoxla", callback_data=more)])
     if trashed:
-        log.info("mail_trashed", count=len(trashed))
-        text = f"🗑 {len(trashed)} məktub Zibil qutusuna köçürüldü — 30 gün geri qaytarmaq olar."
+        log.info("mail_trashed", account=box.label, count=len(trashed))
+        text = (f"🗑 {tag}{len(trashed)} məktub Zibil qutusuna köçürüldü — "
+                "30 gün geri qaytarmaq olar.")
         if keep:
             text += f"\n✋ {len(keep)} məktub saxlanıldı."
     else:
-        text = "✋ Saxlanıldı — bu məktublar bir daha təklif olunmayacaq."
+        text = f"✋ {tag}Saxlanıldı — bu məktublar bir daha təklif olunmayacaq."
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(rows))
 
 
@@ -1549,22 +1593,70 @@ async def _save_settings(uid: int, changes: dict) -> None:
         await session.commit()
 
 
+async def _reply_mail_by_uid(update: Update, boxes: list, arg: str) -> None:
+    """/mail [poçt] <uid> — UID hər poçtda ayrıdır: ikisində də varsa hansı olduğunu soruş."""
+    found, problem = await find_by_uid(boxes, int(arg))
+    if len(found) > 1:
+        options = " · ".join(f"/mail {box.label} {arg}" for box, _ in found)
+        await update.message.reply_text(f"🤔 uid={arg} hər iki poçtda var: {options}")
+        return
+    if not found:
+        await update.message.reply_text(
+            f"📭 E-poçta qoşulmaq olmadı: {problem}" if problem
+            else f"🤷 uid={arg} məktub tapılmadı."
+        )
+        return
+    box, m = found[0]
+    when = fmt_local(m.date, with_weekday=False) if m.date else "?"
+    body = m.body[:MAX_BODY_CHARS // 2] + ("…" if len(m.body) > MAX_BODY_CHARS // 2 else "")
+    await update.message.reply_text(
+        f"📧 {mail_tag(box.label)}{m.subject}\nKimdən: {m.sender}\nTarix: {when}\n\n"
+        f"{body or '(mətn yoxdur)'}"
+    )
+
+
+async def _recent_section(box) -> tuple[str, bool]:
+    """(bir poçtun son məktubları, siyahı göstərildimi) — xəta o biri poçta mane olmur."""
+    tag = mail_tag(box.label)
+    try:
+        mails = await box.recent(limit=10)
+    except Exception as exc:  # noqa: BLE001
+        log.error("mail_cmd_failed", account=box.label, error=str(exc))
+        return f"📭 {tag}E-poçta qoşulmaq olmadı: {exc}", False
+    if not mails:
+        return f"📭 {tag}Qovluqda məktub yoxdur.", False
+    lines = [f"📬 {tag}Son məktublar (● = oxunmamış):"]
+    for m in mails:
+        when = fmt_local(m.date, with_weekday=False) if m.date else "?"
+        dot = "● " if m.unread else ""
+        lines.append(f"{dot}{m.uid} · {when} · {short_sender(m.sender)} — {m.subject}")
+    return "\n".join(lines), True
+
+
 async def mail_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/mail — son məktublar · /mail <uid> — oxu · /mail on|off — yeni məktub bildirişi ·
-    /mail təmizlə — reklamları arxivlə · /mail sil — lazımsız məktubları sil (təsdiqlə)."""
-    if not providers.has("email"):
+    /mail təmizlə — reklamları arxivlə · /mail sil — lazımsız məktubları sil (təsdiqlə).
+
+    İki poçt qoşulubsa əmr hər ikisinə baxır; /mail <poçt> ... yalnız birinə.
+    """
+    boxes = mailboxes()
+    if not boxes:
         await update.message.reply_text(MAIL_NOT_CONFIGURED)
         return
     uid = update.effective_user.id
-    arg = (context.args[0].strip().lower() if context.args else "")
+    args = [a.strip().lower() for a in context.args or []]
+    only = find_mailbox(args[0]) if args and args[0] else None
+    if only is not None:
+        args = args[1:]
+    arg = args[0] if args else ""
 
     if arg in ("təmizlə", "temizle", "clean"):
         await update.message.chat.send_action("typing")
-        await _send_cleanup(context.bot, uid)
+        await _send_cleanup(context.bot, uid, only)
         return
     if arg in ("sil", "delete"):
         await update.message.chat.send_action("typing")
-        await _review_and_send(context.bot, uid)
+        await _review_and_send(context.bot, uid, only)
         return
 
     if arg in ("on", "off"):
@@ -1576,37 +1668,22 @@ async def mail_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"📬 Yeni məktub bildirişi {state}.")
         return
 
-    box = providers.get("email")
+    targets = [only] if only else boxes
     await update.message.chat.send_action("typing")
-    try:
-        if arg.isdigit():
-            m = await box.get(int(arg))
-            if m is None:
-                await update.message.reply_text(f"🤷 uid={arg} məktub tapılmadı.")
-                return
-            when = fmt_local(m.date, with_weekday=False) if m.date else "?"
-            body = m.body[:MAX_BODY_CHARS // 2] + ("…" if len(m.body) > MAX_BODY_CHARS // 2 else "")
-            await update.message.reply_text(
-                f"📧 {m.subject}\nKimdən: {m.sender}\nTarix: {when}\n\n{body or '(mətn yoxdur)'}"
-            )
-            return
-        mails = await box.recent(limit=10)
-    except Exception as exc:  # noqa: BLE001
-        log.error("mail_cmd_failed", error=str(exc))
-        await update.message.reply_text(f"📭 E-poçta qoşulmaq olmadı: {exc}")
+    if arg.isdigit():
+        await _reply_mail_by_uid(update, targets, arg)
         return
 
-    if not mails:
-        await update.message.reply_text("📭 Qovluqda məktub yoxdur.")
-        return
-    lines = ["📬 Son məktublar (● = oxunmamış):"]
-    for m in mails:
-        when = fmt_local(m.date, with_weekday=False) if m.date else "?"
-        dot = "● " if m.unread else ""
-        lines.append(f"{dot}{m.uid} · {when} · {short_sender(m.sender)} — {m.subject}")
-    lines.append("\nOxumaq: /mail <uid> · Bildiriş: /mail on | /mail off")
-    lines.append("Sual da verə bilərsən: «Əlidən gələn son məktubu xülasə et».")
-    await update.message.reply_text("\n".join(lines))
+    sections = [await _recent_section(box) for box in targets]
+    parts = [text for text, _ in sections]
+    if any(shown for _, shown in sections):
+        read = " · ".join(f"/mail {b.label} <uid>" if b.label else "/mail <uid>" for b in targets)
+        parts.append(
+            f"Oxumaq: {read} · Bildiriş: /mail on | /mail off\n"
+            "Sual da verə bilərsən: «Əlidən gələn son məktubu xülasə et»."
+        )
+    for part in split_message("\n\n".join(parts)):
+        await update.message.reply_text(part)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

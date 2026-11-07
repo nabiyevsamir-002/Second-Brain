@@ -72,6 +72,8 @@ def test_build_proposal_stores_the_list_and_remembers_what_to_keep(monkeypatch):
         user.settings = {**user.settings, **changes}
 
     class Box:
+        label, slot = "", 1
+
         async def cleanup_candidates(self, exclude, limit):
             assert exclude == {5} and limit == mail_review.REVIEW_PER_RUN
             return [(111, _mail("Endirim")), (222, _mail("Faktura"))]
@@ -95,7 +97,7 @@ def test_tool_prepares_the_list_but_has_no_way_to_delete(monkeypatch):
 
     monkeypatch.setattr(email_tools, "build_proposal", fake_build)
     monkeypatch.setattr(email_tools, "is_mail_owner", lambda uid: True)
-    monkeypatch.setattr(providers, "_providers", {"email": object(), "llm": object()})
+    monkeypatch.setattr(providers, "_providers", {"email": [FakeBox()], "llm": object()})
     ctx = ToolContext(session=None, user_id=1, llm=None, embedder=None, source=None)
     out = asyncio.run(email_tools.FindUnnecessaryEmailsTool().run(ctx))
     assert seen["deliver"] is True
@@ -131,6 +133,8 @@ class FakeQuery:
 
 
 class FakeBox:
+    label, slot = "", 1
+
     def __init__(self) -> None:
         self.trashed: list[list[int]] = []
         self.restored: list[list[int]] = []
@@ -158,7 +162,7 @@ def env(monkeypatch):
         return user.settings
 
     box = FakeBox()
-    monkeypatch.setattr(providers, "_providers", {"email": box})
+    monkeypatch.setattr(providers, "_providers", {"email": [box]})
     monkeypatch.setattr(handlers, "SessionLocal", FakeSessionLocal)
     monkeypatch.setattr(handlers, "get_or_create_user", get_or_create_user)
     monkeypatch.setattr(handlers, "update_settings", update_settings)
@@ -278,7 +282,9 @@ def test_list_found_by_the_agent_is_sent_once_after_its_reply(monkeypatch):
         user.settings = {**user.settings, **changes}
         return user.settings
 
-    monkeypatch.setattr(providers, "_providers", {"agent": Agent(), "embed": object()})
+    monkeypatch.setattr(
+        providers, "_providers", {"agent": Agent(), "embed": object(), "email": [FakeBox()]}
+    )
     for name, fake in {
         "SessionLocal": FakeSessionLocal, "get_or_create_user": get_or_create_user,
         "get_recent_messages": nothing, "add_message": nothing,

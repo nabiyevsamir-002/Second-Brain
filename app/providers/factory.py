@@ -107,20 +107,27 @@ def init_providers() -> None:
 
         providers.register("search", TavilySearchProvider(settings.tavily_api_key))
 
-    # E-poçt (IMAP, yalnız oxuma) — host + ünvan + parol varsa.
+    # E-poçt (IMAP) — host + ünvan + parol varsa; hər poçt üçün ayrıca provayder (siyahı).
     if settings.email_enabled:
-        from app.providers.email_imap import ImapMailProvider
+        from app.providers.email_imap import ImapMailProvider, mailbox_labels
 
+        accounts = settings.email_accounts
+        labels = mailbox_labels([address for address, _ in accounts])
         providers.register(
             "email",
-            ImapMailProvider(
-                settings.email_imap_host,
-                settings.email_imap_port,
-                settings.email_address,
-                settings.email_password,
-                folder=settings.email_folder,
-                ssl=settings.email_imap_ssl,
-            ),
+            [
+                ImapMailProvider(
+                    settings.email_imap_host,
+                    settings.email_imap_port,
+                    address,
+                    password,
+                    folder=settings.email_folder,
+                    ssl=settings.email_imap_ssl,
+                    label=label,
+                    slot=slot,
+                )
+                for slot, ((address, password), label) in enumerate(zip(accounts, labels), 1)
+            ],
         )
 
     # Tək tool-using agent — llm + embedder hər ikisi varsa qurulur.

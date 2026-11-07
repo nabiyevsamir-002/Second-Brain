@@ -69,6 +69,21 @@ def test_set_env_only_matches_the_exact_key(tmp_path):
     assert _set_env(tmp_path, "MY_KEY=1\nKEY_2=2\n", "KEY", "x") == "MY_KEY=1\nKEY_2=2\nKEY=x\n"
 
 
+def test_second_mailbox_does_not_overwrite_the_first(tmp_path):
+    first = "EMAIL_ADDRESS=a\nEMAIL_PASSWORD=p\n"
+    assert _set_env(tmp_path, first, "EMAIL_ADDRESS_2", "b") == first + "EMAIL_ADDRESS_2=b\n"
+    both = first + "EMAIL_ADDRESS_2=b\n"
+    assert _set_env(tmp_path, both, "EMAIL_ADDRESS_2", "c") == first + "EMAIL_ADDRESS_2=c\n"
+
+
+def test_second_mailbox_is_asked_only_on_request_and_sent_through_the_seed():
+    text = DEPLOY.read_text()
+    assert '--email2) FORCE_EMAIL2=1; shift ;;' in text
+    assert 'if [ "$FORCE_EMAIL2" = 1 ]; then\n  ask_mail ' in text
+    assert "'EMAIL_ADDRESS_2=%s\\nEMAIL_PASSWORD_2=%s\\n' \"$EMAIL2_ADDR\" \"$EMAIL2_PASS\"" in text
+    assert 'read -r -s -p' in _function(DEPLOY, "ask_mail")  # parol ekranda görünmür
+
+
 @pytest.mark.parametrize(
     "value, stored",
     [

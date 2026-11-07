@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Second Brain: MacBook-dan BİR əmr — Linux noutbukda hər şeyi qurur, yeniləyir, işə salır.
 #
-#   bash scripts/linux/deploy-from-mac.sh [HƏDƏF] [--vps root@IP [--vps-key AÇAR]] [--email] [--yes]
+#   bash scripts/linux/deploy-from-mac.sh [HƏDƏF] [--vps root@IP [--vps-key AÇAR]] [--email] [--email2] [--yes]
 #
 #   HƏDƏF      ssh alias və ya user@ip (default: jobradar-linux)
 #   --vps      köhnə serverdən ilk keçid: botu orada dayandırır, qeydləri köçürür
 #   --vps-key  VPS üçün SSH açarı (default açar oranı açmırsa, məs. ~/.ssh/gh_actions)
 #   --email    Gmail məlumatlarını yenidən soruş
+#   --email2   ikinci Gmail poçtunu əlavə et və ya parolunu yenilə
 #   --yes    təsdiq soruşma
 #
 # Bütün sualları başda verir, sonra işini özü görür (Linux şifrəsi bir dəfə soruşula bilər).
@@ -28,14 +29,16 @@ VPS=""
 VPS_KEY=""
 VPS_DIR="${SECOND_BRAIN_VPS_DIR:-/root/AI-Assistant}"
 FORCE_EMAIL=0
+FORCE_EMAIL2=0
 YES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --vps) VPS="${2:?--vps üçün ünvan lazımdır (root@IP)}"; shift 2 ;;
     --vps-key) VPS_KEY="${2:?--vps-key üçün açar faylı lazımdır}"; shift 2 ;;
     --email) FORCE_EMAIL=1; shift ;;
+    --email2) FORCE_EMAIL2=1; shift ;;
     --yes) YES=1; shift ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     -*) die "Naməlum seçim: $1" ;;
     *) TARGET="$1"; shift ;;
   esac
@@ -127,23 +130,38 @@ if [ "$FIRST" = 1 ]; then
   if [ -n "$TG_TOKEN" ]; then info "Telegram tokeni: bu Mac-ın .env-indən"; fi
 fi
 
+ask_mail() {  # BAŞLIQ → MAIL_ADDR, MAIL_PASS (parol ekranda görünmür; boş → ikisi də boş)
+  say "$1"
+  info "App Password: myaccount.google.com/apppasswords (əvvəl 2 addımlı doğrulama açıq olmalıdır)"
+  MAIL_ADDR=""
+  MAIL_PASS=""
+  read -r -p "   Gmail ünvanı: " MAIL_ADDR </dev/tty || MAIL_ADDR=""
+  if [ -n "$MAIL_ADDR" ]; then
+    read -r -s -p "   App Password (16 simvol, ekranda görünmür): " MAIL_PASS </dev/tty || MAIL_PASS=""
+    printf '\n'
+    MAIL_PASS="$(printf '%s' "$MAIL_PASS" | tr -d ' ')"
+    if [ -z "$MAIL_PASS" ]; then MAIL_ADDR=""; fi
+  fi
+}
+
 EMAIL_ADDR=""
 EMAIL_PASS=""
+EMAIL2_ADDR=""
+EMAIL2_PASS=""
 ASK_EMAIL=0
 if [ "$FORCE_EMAIL" = 1 ]; then ASK_EMAIL=1; fi
 if [ "$FIRST" = 1 ] && [ "$YES" = 0 ]; then
   if ! remote "grep -Eqs '^EMAIL_PASSWORD=.+' \"\$HOME/SecondBrain/.env\"" 2>/dev/null; then ASK_EMAIL=1; fi
 fi
 if [ "$ASK_EMAIL" = 1 ]; then
-  say "E-poçt (istəyə bağlı — boş burax, sonra əlavə edərsən)"
-  info "App Password: myaccount.google.com/apppasswords (əvvəl 2 addımlı doğrulama açıq olmalıdır)"
-  read -r -p "   Gmail ünvanı: " EMAIL_ADDR </dev/tty || EMAIL_ADDR=""
-  if [ -n "$EMAIL_ADDR" ]; then
-    read -r -s -p "   App Password (16 simvol, ekranda görünmür): " EMAIL_PASS </dev/tty || EMAIL_PASS=""
-    printf '\n'
-    EMAIL_PASS="$(printf '%s' "$EMAIL_PASS" | tr -d ' ')"
-    if [ -z "$EMAIL_PASS" ]; then EMAIL_ADDR=""; fi
-  fi
+  ask_mail "E-poçt (istəyə bağlı — boş burax, sonra əlavə edərsən)"
+  EMAIL_ADDR="$MAIL_ADDR"
+  EMAIL_PASS="$MAIL_PASS"
+fi
+if [ "$FORCE_EMAIL2" = 1 ]; then
+  ask_mail "İkinci e-poçt (boş burax — heç nə dəyişmir)"
+  EMAIL2_ADDR="$MAIL_ADDR"
+  EMAIL2_PASS="$MAIL_PASS"
 fi
 
 MIGRATE=0
@@ -173,12 +191,15 @@ git ls-files -co --exclude-standard -z \
 good "Kod noutbukdadır (~/SecondBrain)"
 
 # Sirlər yalnız stdin ilə gedir: komanda sətrində (ps) görünmür.
-if [ -n "$TG_TOKEN$TG_IDS$EMAIL_ADDR" ]; then
+if [ -n "$TG_TOKEN$TG_IDS$EMAIL_ADDR$EMAIL2_ADDR" ]; then
   {
     if [ -n "$TG_TOKEN" ]; then printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TG_TOKEN"; fi
     if [ -n "$TG_IDS" ]; then printf 'ALLOWED_USER_IDS=%s\n' "$TG_IDS"; fi
     if [ -n "$EMAIL_ADDR" ]; then
       printf 'EMAIL_ADDRESS=%s\nEMAIL_PASSWORD=%s\n' "$EMAIL_ADDR" "$EMAIL_PASS"
+    fi
+    if [ -n "$EMAIL2_ADDR" ]; then
+      printf 'EMAIL_ADDRESS_2=%s\nEMAIL_PASSWORD_2=%s\n' "$EMAIL2_ADDR" "$EMAIL2_PASS"
     fi
   } | remote 'umask 077; cat > "$HOME/SecondBrain/.env.seed"'
 fi
@@ -219,7 +240,7 @@ fi
 
 say "Hazırdır"
 info "Telegram-da botuna yaz: /health"
-info "Yeniləmək: eyni əmr · E-poçt əlavə etmək: --email ilə"
+info "Yeniləmək: eyni əmr · E-poçt əlavə etmək: --email ilə · İkinci poçt: --email2 ilə"
 info "Loqlar:  ssh $TARGET 'cd ~/SecondBrain && docker compose logs -f bot'"
 info "Yoxlama: ssh $TARGET 'cd ~/SecondBrain && docker compose exec bot python scripts/doctor.py'"
 if [ "$MIGRATE" = 1 ]; then

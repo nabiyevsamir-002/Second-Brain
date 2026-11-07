@@ -31,7 +31,7 @@ from app.repositories.reminders import (
 )
 from app.repositories.tasks import list_completed_between, list_open_tasks
 from app.repositories.users import get_user, update_settings
-from app.services.email_watch import check_new_mail, is_mail_owner
+from app.services.email_watch import check_new_mail, is_mail_owner, mailboxes
 from app.services.journal import EVENING_HEADER
 from app.services.mail_review import build_proposal
 from app.services.reembed import backfill_embeddings
@@ -91,6 +91,21 @@ def _local_day_bounds(moment: datetime) -> tuple[datetime, datetime]:
     return start, start + timedelta(days=1)
 
 
+async def _unread_line() -> str | None:
+    """Brifinqin poçt sətri: hər poçtun oxunmamış sayı. Xəta brifinqi dayandırmır, görünür."""
+    parts: list[str] = []
+    for box in mailboxes():
+        try:
+            n = await box.unread_count()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("briefing_mail_failed", account=box.label, error=str(exc))
+            parts.append(f"{box.label or 'poçt'} ⚠️ qoşulmadı")
+            continue
+        if n:
+            parts.append(f"{box.label} {n}" if box.label else str(n))
+    return f"📧 Oxunmamış məktub: {' · '.join(parts)} (/mail)" if parts else None
+
+
 async def _build_briefing(session, user_id: int) -> str:
     local = now_local()
     day_start, day_end = _local_day_bounds(local)
@@ -126,14 +141,11 @@ async def _build_briefing(session, user_id: int) -> str:
     if n_recent:
         lines.append(f"🗒 Son 24 saatda {n_recent} qeyd əlavə etdin.")
 
-    # Poçt qutusu sahibinindir (ALLOWED_USER_IDS-in birincisi).
-    if providers.has("email") and is_mail_owner(user_id):
-        try:
-            n_unread = await providers.get("email").unread_count()
-            if n_unread:
-                lines.append(f"📧 Oxunmamış məktub: {n_unread} (/mail)")
-        except Exception as exc:  # noqa: BLE001 — brifinq poçt xətasına görə dayanmasın
-            log.warning("briefing_mail_failed", error=str(exc))
+    # Poçtlar sahibinindir (ALLOWED_USER_IDS-in birincisi).
+    if is_mail_owner(user_id):
+        unread = await _unread_line()
+        if unread:
+            lines.append(unread)
 
     if not tasks and not todays and not n_recent:
         lines.append("Bu gün üçün planlaşdırılmış tapşırıq və ya xatırlatma yoxdur. 📭")
@@ -173,15 +185,28 @@ async def _build_digest(session, user_id: int) -> str:
     return "\n".join(lines).strip()
 
 
-async def _review_mail(session, user_id: int) -> dict | None:
-    """Claude lazımsız məktublara baxır (yalnız poçt sahibi; xəta → None, yekun dayanmasın)."""
-    if not (providers.has("email") and providers.has("llm") and is_mail_owner(user_id)):
-        return None
-    try:
-        return await build_proposal(session, user_id, providers.get("email"), providers.get("llm"))
-    except Exception as exc:  # noqa: BLE001
-        log.warning("evening_mail_review_failed", error=str(exc))
-        return None
+async def _review_mail(session, user_id: int) -> list[dict]:
+    """Claude hər poçtun lazımsız məktublarına baxır (yalnız poçt sahibi).
+
+    Xətalı poçt ötürülür: o biri poçt və yekunun özü dayanmasın.
+    """
+    if not (providers.has("llm") and is_mail_owner(user_id)):
+        return []
+    proposals: list[dict] = []
+    for box in mailboxes():
+        try:
+            proposals.append(await build_proposal(session, user_id, box, providers.get("llm")))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("evening_mail_review_failed", account=box.label, error=str(exc))
+    return proposals
+
+
+def _review_button(p: dict) -> InlineKeyboardButton:
+    """Axşam yekununda bir poçtun lazımsız məktub siyahısını açan düymə."""
+    text = "🗑 Bax və sil"
+    if p.get("account"):
+        text += f" · {p['account']} ({len(p['items'])})"
+    return InlineKeyboardButton(text, callback_data=f"mt:show:{p['key']}")
 
 
 async def _build_evening(session, user_id: int) -> tuple[str, InlineKeyboardMarkup | None]:
@@ -211,12 +236,11 @@ async def _build_evening(session, user_id: int) -> tuple[str, InlineKeyboardMark
         lines.append("")
 
     keyboard = None
-    proposal = await _review_mail(session, user_id)
-    if proposal and proposal["items"]:
-        lines += [f"🗑 Lazımsız görünən {len(proposal['items'])} məktub tapdım.", ""]
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🗑 Bax və sil", callback_data=f"mt:show:{proposal['key']}")
-        ]])
+    found = [p for p in await _review_mail(session, user_id) if p["items"]]
+    if found:
+        total = sum(len(p["items"]) for p in found)
+        lines += [f"🗑 Lazımsız görünən {total} məktub tapdım.", ""]
+        keyboard = InlineKeyboardMarkup([[_review_button(p)] for p in found])
 
     lines.append(
         "📝 Bu gün necə keçdi? Bu mesaja cavab ver (yazı və ya səs) — gündəliyinə yazacağam."
@@ -331,8 +355,12 @@ async def heartbeat(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def email_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Yeni məktubları yoxla, vacib/adi olanları sahibə (ALLOWED_USER_IDS[0]) bildir."""
-    if not providers.has("email") or not settings.allowed_ids:
+    """Hər poçtun yeni məktublarını yoxla, vacib/adi olanları sahibə (ALLOWED_USER_IDS[0]) bildir.
+
+    Bir poçtun xətası o birini saxlamır: xətalı poçt növbəti tick-də yenidən yoxlanır.
+    """
+    boxes = mailboxes()
+    if not boxes or not settings.allowed_ids:
         return
     owner = settings.allowed_ids[0]
     async with SessionLocal() as session:
@@ -341,20 +369,21 @@ async def email_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         if not s.get("email_notify", True):
             return
         llm = providers.get("llm") if providers.has("llm") else None
-        try:
-            text, changes = await check_new_mail(providers.get("email"), llm, s)
-        except Exception as exc:  # noqa: BLE001 — şəbəkə/IMAP: növbəti tick-də yenidən
-            log.warning("email_check_failed", error=str(exc))
-            return
-        if text:
+        for box in boxes:
             try:
-                await context.bot.send_message(chat_id=owner, text=text)
-            except Exception as exc:  # noqa: BLE001 — vəziyyəti irəli aparma, sonra təkrar
-                log.warning("email_notify_failed", error=str(exc))
-                return
-            log.info("email_notified", user_id=owner)
-        await update_settings(session, owner, changes)
-        await session.commit()
+                text, changes = await check_new_mail(box, llm, s)
+            except Exception as exc:  # noqa: BLE001 — şəbəkə/IMAP: növbəti tick-də yenidən
+                log.warning("email_check_failed", account=box.label, error=str(exc))
+                continue
+            if text:
+                try:
+                    await context.bot.send_message(chat_id=owner, text=text)
+                except Exception as exc:  # noqa: BLE001 — vəziyyəti irəli aparma, sonra təkrar
+                    log.warning("email_notify_failed", account=box.label, error=str(exc))
+                    continue
+                log.info("email_notified", user_id=owner, account=box.label)
+            await update_settings(session, owner, changes)
+            await session.commit()
 
 
 async def reembed_tick(context: ContextTypes.DEFAULT_TYPE) -> None:

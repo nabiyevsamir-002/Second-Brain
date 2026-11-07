@@ -56,6 +56,21 @@ SDK_RULES = (
 )
 
 
+def _mailbox_note() -> str:
+    """İki poçt qoşulubsa agent adlarını bilsin: «abc poçtuma bax» → account=abc."""
+    from app.services.email_watch import mailboxes
+
+    boxes = mailboxes()
+    if len(boxes) < 2:
+        return ""
+    names = ", ".join(f"{b.label} = {b.address}" for b in boxes)
+    return (
+        f"Qoşulmuş poçtlar: {names}. Alətlər hamısına baxır; istifadəçi bir poçtu deyirsə "
+        "`account` ver. Cavabda məktubun hansı poçta aid olduğunu göstər. uid hər poçtda "
+        "ayrıdır: `read_email`-ə siyahıdakı poçt= adını `account` kimi ver.\n\n"
+    )
+
+
 def default_tools() -> list[Tool]:
     """Abunə agentinin alətləri (e-poçt yalnız qoşulubsa). WebSearch daxili alətdir."""
     from app.providers.registry import providers
@@ -137,7 +152,7 @@ class SDKBrainAgent:
     def system_prompt(self) -> str:
         intents = WEB_SEARCH_INTENT_SDK if self.has_web_search else ""
         if "check_email" in self._names:
-            intents += EMAIL_INTENT
+            intents += EMAIL_INTENT + _mailbox_note()
         return (
             AGENT_SYSTEM_STATIC.format(web_search_intent=intents)
             + SDK_RULES

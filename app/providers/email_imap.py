@@ -6,6 +6,7 @@
   Hər ikisi geri qaytarılır; birdəfəlik silmə (expunge) yoxdur.
 • Gmail: 2 addımlı doğrulama + App Password (adi Google parolu IMAP-da işləmir).
 • imaplib sinxrondur → asyncio.to_thread; hər əməliyyat qısa ömürlü bağlantı açır.
+• Hər poçtun öz provayderi var: label — mesajlardakı qısa adı («abc»), slot — sırası (1, 2).
 """
 
 from __future__ import annotations
@@ -53,6 +54,20 @@ class Mail:
     snippet: str = ""
     body: str = ""
     bulk: bool = False  # reklam/bülleten (List-Unsubscribe / Precedence: bulk)
+
+
+def mailbox_labels(addresses: list[str]) -> list[str]:
+    """Poçtların qısa adları: abcdef…@ → abc. Tək poçtda ad lazım deyil (boş).
+
+    Adlar üst-üstə düşsə və ya /mail əmrləri ilə qarışsa: p1, p2.
+    """
+    if len(addresses) < 2:
+        return [""] * len(addresses)
+    labels = [re.sub(r"[^a-z0-9]", "", a.split("@")[0].lower())[:3] for a in addresses]
+    clash = len(set(labels)) < len(labels) or any(
+        not x or x.isdigit() or x in ("on", "off", "sil") for x in labels
+    )
+    return [f"p{i}" for i in range(1, len(labels) + 1)] if clash else labels
 
 
 def imap_date(d: date) -> str:
@@ -126,11 +141,12 @@ def _fetch_items(data: list) -> list[tuple[int, bytes, bytes]]:
 class ImapMailProvider:
     def __init__(
         self, host: str, port: int, address: str, password: str,
-        folder: str = "INBOX", ssl: bool = True,
+        folder: str = "INBOX", ssl: bool = True, label: str = "", slot: int = 1,
     ) -> None:
         self.host, self.port = host, port
         self.address, self._password = address, password
         self.folder, self.ssl = folder, ssl
+        self.label, self.slot = label, slot
 
     # --- sinxron (thread-də) ---------------------------------------------
     def _connect(self) -> imaplib.IMAP4:

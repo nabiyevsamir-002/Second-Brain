@@ -128,9 +128,11 @@ async def main(live: bool, audio: str | None) -> None:
                 assert "2026" in note.raw_text
 
                 if providers.has("email"):
-                    line("TEST 6 — e-poçt (son 3 məktub)")
-                    for m in await providers.get("email").recent(limit=3):
-                        print(f"  {'●' if m.unread else ' '} {m.uid} · {m.sender} — {m.subject}")
+                    line("TEST 6 — e-poçt (hər poçtdan son 3 məktub)")
+                    for box in providers.get("email"):
+                        for m in await box.recent(limit=3):
+                            dot = "●" if m.unread else " "
+                            print(f"  {dot} {box.label} {m.uid} · {m.sender} — {m.subject}")
 
             line("TEST 3 — embedding modeli dəyişikliyi → təkrar embed")
             total = await session.scalar(select(func.count()).select_from(Note))

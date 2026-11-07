@@ -27,7 +27,7 @@ def day(monkeypatch):
         "done": [_task(3, "Hesabat")],
         "open": [_task(5, "Kitab oxu", NOW - timedelta(days=1)), _task(6, "Məktub yaz")],
         "tomorrow": [SimpleNamespace(remind_at=NOW + timedelta(hours=11), text="Həkimə zəng et")],
-        "proposal": {"key": "K1", "items": [{"id": 111}, {"id": 222}]},
+        "proposals": [{"key": "K1", "items": [{"id": 111}, {"id": 222}]}],
     }
 
     async def completed(session, uid, start, end, limit=10):
@@ -42,7 +42,7 @@ def day(monkeypatch):
         return data["tomorrow"]
 
     async def review_mail(session, uid):
-        return data["proposal"]
+        return data["proposals"]
 
     monkeypatch.setattr(scheduler, "now_local", lambda: NOW)
     monkeypatch.setattr(scheduler, "now_utc", lambda: NOW.astimezone(timezone.utc))
@@ -61,12 +61,13 @@ def test_evening_lists_the_day_tomorrow_and_mail_then_asks_about_the_day(day):
     assert "09:00 — Həkimə zəng et" in text
     assert "Lazımsız görünən 2 məktub tapdım" in text
     assert kb.inline_keyboard[0][0].callback_data == "mt:show:K1"
+    assert kb.inline_keyboard[0][0].text == "🗑 Bax və sil"
     assert text.endswith("gündəliyinə yazacağam.")
 
 
-@pytest.mark.parametrize("proposal", [None, {"key": "K1", "items": []}])
-def test_evening_without_unnecessary_mail_has_no_button(day, proposal):
-    day["proposal"] = proposal
+@pytest.mark.parametrize("proposals", [[], [{"key": "K1", "items": []}]])
+def test_evening_without_unnecessary_mail_has_no_button(day, proposals):
+    day["proposals"] = proposals
     text, kb = asyncio.run(scheduler._build_evening(None, 1))
     assert kb is None and "Lazımsız" not in text
 

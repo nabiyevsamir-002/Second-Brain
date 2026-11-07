@@ -13,7 +13,7 @@ from typing import Any
 from app.config import settings
 from app.logging_conf import get_logger
 from app.repositories.users import get_user, update_settings
-from app.services.email_watch import short_sender
+from app.services.email_watch import short_sender, state_key
 from app.services.notes_service import _parse_json
 from app.timeutils import fmt_local, now_utc
 
@@ -37,9 +37,13 @@ REVIEW_SYSTEM = (
 )
 
 
-def new_key() -> str:
-    """Düymələri bu siyahıya bağlayan qısa açar (köhnə mesajın düyməsi yenisinə toxunmasın)."""
-    return now_utc().strftime("%m%d%H%M%S")
+def new_key(label: str = "") -> str:
+    """Düymələri bu siyahıya və öz poçtuna bağlayan qısa açar: «abc-1107220000».
+
+    Köhnə mesajın düyməsi yeni siyahıya, bir poçtun düyməsi o biri poçta toxunmasın.
+    """
+    stamp = now_utc().strftime("%m%d%H%M%S")
+    return f"{label}-{stamp}" if label else stamp
 
 
 def _mail_block(n: int, m: Any) -> str:
@@ -91,22 +95,25 @@ async def review(llm: Any, items: list[tuple[int, Any]]) -> tuple[list[dict], li
 async def build_proposal(
     session: Any, user_id: int, box: Any, llm: Any, *, deliver: bool = False
 ) -> dict:
-    """Namizədlərə Claude ilə bax, təklifi settings['mail_trash']-ə yaz və qaytar.
+    """Bir poçtun namizədlərinə Claude ilə bax, təklifi həmin poçtun mail_trash-ına yaz, qaytar.
 
     deliver=True (agent aləti) → handler agentin cavabından sonra siyahını ayrıca mesajla
-    göndərir. Claude-un «saxla» dediyi məktublar mail_kept-ə düşür.
+    göndərir. Claude-un «saxla» dediyi məktublar həmin poçtun mail_kept-inə düşür.
     """
     user = await get_user(session, user_id)
     s = (user.settings if user else {}) or {}
-    kept = list(s.get("mail_kept") or [])
+    kept_key = state_key(box, "mail_kept")
+    kept = list(s.get(kept_key) or [])
     items = await box.cleanup_candidates(exclude=set(kept), limit=REVIEW_PER_RUN)
     proposals, keep = await review(llm, items) if items else ([], [])
     proposal = {
-        "key": new_key(), "reviewed": len(items), "items": proposals, "drop": [],
-        "deliver": deliver and bool(proposals),
+        "key": new_key(box.label), "account": box.label, "reviewed": len(items),
+        "items": proposals, "drop": [], "deliver": deliver and bool(proposals),
     }
-    await update_settings(
-        session, user_id, {"mail_trash": proposal, "mail_kept": (kept + keep)[-MAX_KEPT:]}
-    )
-    log.info("mail_reviewed", user_id=user_id, reviewed=len(items), proposed=len(proposals))
+    await update_settings(session, user_id, {
+        state_key(box, "mail_trash"): proposal,
+        kept_key: (kept + keep)[-MAX_KEPT:],
+    })
+    log.info("mail_reviewed", user_id=user_id, account=box.label, reviewed=len(items),
+             proposed=len(proposals))
     return proposal

@@ -210,6 +210,8 @@ class FakeQuery:
 
 
 class FakeBox:
+    label, slot = "", 1
+
     def __init__(self) -> None:
         self.archived: list[list[int]] = []
 
@@ -235,7 +237,7 @@ def env(monkeypatch):
         return user.settings
 
     box = FakeBox()
-    monkeypatch.setattr(providers, "_providers", {"email": box})
+    monkeypatch.setattr(providers, "_providers", {"email": [box]})
     monkeypatch.setattr(handlers, "SessionLocal", FakeSessionLocal)
     monkeypatch.setattr(handlers, "get_or_create_user", get_or_create_user)
     monkeypatch.setattr(handlers, "update_settings", update_settings)

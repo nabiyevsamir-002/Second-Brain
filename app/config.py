@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     email_imap_ssl: bool = True
     email_address: str = ""
     email_password: str = ""
+    # İkinci poçt (istəyə bağlı): eyni host, öz ünvanı və App Password-u.
+    email_address_2: str = ""
+    email_password_2: str = ""
     email_folder: str = "INBOX"
     email_check_interval_min: int = 10  # yeni məktub bildirişi yoxlaması; 0 = söndürülü
     email_ai_triage: bool = True  # yeni məktubları Claude ilə vacib/adi ayır (abunə istifadəsi)
@@ -120,8 +123,21 @@ class Settings(BaseSettings):
         return "openai" if self.openai_api_key else "local"
 
     @property
+    def email_accounts(self) -> list[tuple[str, str]]:
+        """Doldurulmuş poçtlar (ünvan, parol); eyni ünvan iki dəfə yazılıbsa bir dəfə sayılır."""
+        accounts: dict[str, tuple[str, str]] = {}
+        for address, password in (
+            (self.email_address, self.email_password),
+            (self.email_address_2, self.email_password_2),
+        ):
+            address = address.strip()
+            if address and password:
+                accounts.setdefault(address.lower(), (address, password))
+        return list(accounts.values())
+
+    @property
     def email_enabled(self) -> bool:
-        return bool(self.email_imap_host and self.email_address and self.email_password)
+        return bool(self.email_imap_host and self.email_accounts)
 
     @property
     def tz(self) -> ZoneInfo:
